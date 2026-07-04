@@ -12,7 +12,6 @@ interface DisplayMessage {
 interface UseChatStreamParams {
   activeConversationRef: React.MutableRefObject<string | null>;
   setMessages: React.Dispatch<React.SetStateAction<DisplayMessage[]>>;
-  selectedWorkspaceIds: string[];
   workspaceId?: string;
 }
 
@@ -327,7 +326,6 @@ function processStreamEvents(
 export function useChatStream({
   activeConversationRef,
   setMessages,
-  selectedWorkspaceIds,
   workspaceId,
 }: UseChatStreamParams) {
   const [streamingContent, setStreamingContent] = useState('');
@@ -404,7 +402,7 @@ export function useChatStream({
 
       const stream = streamMessage(convId, userMessage, {
         attachmentIds,
-        workspaceIds: selectedWorkspaceIds.length > 0 ? selectedWorkspaceIds : workspaceId ? [workspaceId] : undefined,
+        workspaceIds: workspaceId ? [workspaceId] : undefined,
       });
 
       await processStreamEvents(
@@ -438,7 +436,7 @@ export function useChatStream({
     } finally {
       setLoading(false);
     }
-  }, [selectedWorkspaceIds, workspaceId, setMessages]);
+  }, [workspaceId, setMessages]);
 
   const handleRegenerate = useCallback(async (messageId: string) => {
     const convId = activeConversationRef.current;
@@ -464,7 +462,7 @@ export function useChatStream({
       streamingConversationRef.current = convId;
 
       const stream = regenerateMessage(convId, messageId, {
-        workspaceIds: selectedWorkspaceIds.length > 0 ? selectedWorkspaceIds : workspaceId ? [workspaceId] : undefined,
+        workspaceIds: workspaceId ? [workspaceId] : undefined,
       });
 
       await processStreamEvents(
@@ -498,7 +496,7 @@ export function useChatStream({
     } finally {
       setLoading(false);
     }
-  }, [activeConversationRef, loading, selectedWorkspaceIds, workspaceId, setMessages]);
+  }, [activeConversationRef, loading, workspaceId, setMessages]);
 
   return {
     streamingContent,

@@ -1,30 +1,11 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { ArrowUpIcon, StopIcon, XMarkIcon, ChevronUpDownIcon, CheckIcon, AtSymbolIcon } from '@heroicons/react/24/solid';
+import { ArrowUpIcon, StopIcon, XMarkIcon, AtSymbolIcon } from '@heroicons/react/24/solid';
 import { PaperClipIcon } from '@heroicons/react/24/outline';
 import type { PendingAttachment } from '../../hooks/useChatAttachments';
-import type { Workspace } from '../../stores/workspaceStore';
 import type { MentionData } from '../../types/mention';
 import { MENTION_ICONS } from '../../types/mention';
 import { UniversalMentionAutocomplete } from '../Mentions/UniversalMentionAutocomplete';
 import { getTextareaCursorCoords } from '../../lib/textareaCaret';
-import Dropdown from '../Dropdown/Dropdown';
-
-function WorkspaceIcon({ workspace, size = 'sm' }: { workspace: Workspace; size?: 'sm' | 'md' }) {
-  const px = size === 'sm' ? 'w-4 h-4' : 'w-5 h-5';
-  const textSize = size === 'sm' ? 'text-[9px]' : 'text-[10px]';
-
-  if (workspace.icon_url) {
-    return <img src={workspace.icon_url} alt="" className={`${px} rounded object-cover flex-shrink-0`} />;
-  }
-  if (workspace.emoji) {
-    return <span className={`${size === 'sm' ? 'text-sm' : 'text-sm'} flex-shrink-0`}>{workspace.emoji}</span>;
-  }
-  return (
-    <span className={`${px} flex items-center justify-center bg-gradient-to-br from-blue-500 to-purple-600 text-white font-bold ${textSize} rounded flex-shrink-0`}>
-      {workspace.name.charAt(0).toUpperCase()}
-    </span>
-  );
-}
 
 interface ChatInputProps {
   value: string;
@@ -39,11 +20,6 @@ interface ChatInputProps {
   onAddFiles?: (files: File[]) => void;
   onRemoveAttachment?: (localId: string) => void;
   isUploading?: boolean;
-  // Workspace selector props
-  selectedWorkspaceIds?: string[];
-  workspaces?: Workspace[];
-  onWorkspaceChange?: (workspaceIds: string[]) => void;
-  workspaceLocked?: boolean;
   // Mention props
   mentions?: MentionData[];
   onMentionSelect?: (data: MentionData) => void;
@@ -63,10 +39,6 @@ export default function ChatInput({
   onAddFiles,
   onRemoveAttachment,
   isUploading = false,
-  selectedWorkspaceIds = [],
-  workspaces = [],
-  onWorkspaceChange,
-  workspaceLocked = false,
   mentions = [],
   onMentionSelect,
   onRemoveMention,
@@ -75,8 +47,6 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const workspaceButtonRef = useRef<HTMLButtonElement>(null);
-  const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
   const [showMentionAutocomplete, setShowMentionAutocomplete] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionCursorCoords, setMentionCursorCoords] = useState<{ top: number; bottom: number; left: number } | null>(null);
@@ -236,46 +206,9 @@ export default function ChatInput({
     e.target.value = '';
   }, [onAddFiles]);
 
-  const toggleWorkspace = (wsId: string) => {
-    if (!onWorkspaceChange) return;
-    if (selectedWorkspaceIds.includes(wsId)) {
-      onWorkspaceChange(selectedWorkspaceIds.filter(id => id !== wsId));
-    } else {
-      onWorkspaceChange([...selectedWorkspaceIds, wsId]);
-    }
-  };
-
-  const selectAll = () => {
-    onWorkspaceChange?.([]);
-    setWorkspaceDropdownOpen(false);
-  };
-
   const hasAttachments = pendingAttachments.length > 0;
   const hasMentions = mentions.length > 0;
   const canSubmit = (value.trim().length > 0 || hasAttachments) && !disabled && !isUploading;
-
-  const effectiveSelectedWorkspaceIds =
-    workspaceLocked && workspaceId && selectedWorkspaceIds.length === 0
-      ? [workspaceId]
-      : selectedWorkspaceIds;
-  const isAll = effectiveSelectedWorkspaceIds.length === 0;
-  const selectedWorkspaces = workspaces.filter(w => effectiveSelectedWorkspaceIds.includes(w.id));
-
-  // Build label for the pill
-  let pillLabel: React.ReactNode;
-  if (isAll) {
-    pillLabel = <span className="text-[13px] font-semibold">All workspaces</span>;
-  } else if (selectedWorkspaces.length === 1) {
-    const ws = selectedWorkspaces[0];
-    pillLabel = (
-      <>
-        <WorkspaceIcon workspace={ws} size="sm" />
-        <span className="text-[13px] font-semibold truncate">{ws.name}</span>
-      </>
-    );
-  } else {
-    pillLabel = <span className="text-[13px] font-semibold">{selectedWorkspaces.length} workspaces</span>;
-  }
 
   return (
     <div className="relative" ref={containerRef}>
@@ -368,69 +301,6 @@ export default function ChatInput({
         <div className="flex items-center justify-between px-1 pt-0.5">
           {/* Left actions */}
           <div className="flex items-center gap-1.5">
-            {/* Workspace selector */}
-            {onWorkspaceChange && workspaces.length > 0 && (
-              <>
-                <button
-                  ref={workspaceButtonRef}
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); if (!workspaceLocked) setWorkspaceDropdownOpen(!workspaceDropdownOpen); }}
-                  className={`flex items-center h-9 rounded-full border border-black/10 text-text-secondary transition-colors pl-3 pr-2 gap-1.5 max-w-[180px] ${
-                    workspaceLocked ? 'opacity-60 cursor-default' : 'hover:bg-black/5'
-                  }`}
-                  title={workspaceLocked ? 'Workspace context is locked for this conversation' : 'Select workspace scope'}
-                >
-                  {pillLabel}
-                  {!workspaceLocked && <ChevronUpDownIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />}
-                </button>
-                {!workspaceLocked && (
-                  <Dropdown
-                    isOpen={workspaceDropdownOpen}
-                    onClose={() => setWorkspaceDropdownOpen(false)}
-                    trigger={workspaceButtonRef}
-                    position="top"
-                    align="left"
-                  >
-                    <div className="py-1 max-h-[240px] overflow-y-auto">
-                      {/* All workspaces option */}
-                      <button
-                        onClick={selectAll}
-                        className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-black/5 transition-colors ${
-                          isAll ? 'text-brand-primary font-medium' : 'text-text-body'
-                        }`}
-                      >
-                        <span className="w-5 h-5 flex items-center justify-center">
-                          {isAll && <CheckIcon className="w-4 h-4 text-brand-primary" />}
-                        </span>
-                        <span>All workspaces</span>
-                      </button>
-                      {/* Workspace options (multi-select) */}
-                      {workspaces.map((ws) => {
-                        const isSelected = selectedWorkspaceIds.includes(ws.id);
-                        return (
-                          <button
-                            key={ws.id}
-                            onClick={(e) => { e.stopPropagation(); toggleWorkspace(ws.id); }}
-                            className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-black/5 transition-colors ${
-                              isSelected ? 'text-brand-primary font-medium' : 'text-text-body'
-                            }`}
-                          >
-                            <span className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-                              {isSelected ? (
-                                <CheckIcon className="w-4 h-4 text-brand-primary" />
-                              ) : (
-                                <WorkspaceIcon workspace={ws} size="md" />
-                              )}
-                            </span>
-                            <span className="truncate">{ws.name}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </Dropdown>
-                )}
-              </>
-            )}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}

@@ -42,8 +42,6 @@ export default function ChatView() {
   const removeConversation = useConversationStore((state) => state.removeConversation);
   const fetchConversations = useConversationStore((state) => state.fetchConversations);
   const hasChattedThisSession = useConversationStore((state) => state.hasChattedThisSession);
-  const workspaces = useWorkspaceStore((state) => state.workspaces);
-  const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<string[]>([]);
   const [mentions, setMentions] = useState<MentionData[]>([]);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState('');
@@ -61,12 +59,6 @@ export default function ChatView() {
   // Mention handlers
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
   const mentionWorkspaceId = workspaceId || activeWorkspaceId || null;
-
-  useEffect(() => {
-    if (workspaceId) {
-      setSelectedWorkspaceIds([workspaceId]);
-    }
-  }, [workspaceId]);
 
   const handleMentionSelect = useCallback((data: MentionData) => {
     setMentions((prev) => {
@@ -149,7 +141,6 @@ export default function ChatView() {
   } = useChatStream({
     activeConversationRef,
     setMessages,
-    selectedWorkspaceIds,
     workspaceId,
   });
 
@@ -713,10 +704,6 @@ export default function ChatView() {
               onAddFiles={addFiles}
               onRemoveAttachment={removeAttachment}
               isUploading={isUploading}
-              selectedWorkspaceIds={selectedWorkspaceIds}
-              workspaces={workspaces}
-              onWorkspaceChange={setSelectedWorkspaceIds}
-              workspaceLocked={!!workspaceId || messages.length > 0}
               mentions={mentions}
               onMentionSelect={handleMentionSelect}
               onRemoveMention={handleRemoveMention}
