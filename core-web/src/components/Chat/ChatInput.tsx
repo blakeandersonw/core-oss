@@ -254,8 +254,12 @@ export default function ChatInput({
   const hasMentions = mentions.length > 0;
   const canSubmit = (value.trim().length > 0 || hasAttachments) && !disabled && !isUploading;
 
-  const isAll = selectedWorkspaceIds.length === 0;
-  const selectedWorkspaces = workspaces.filter(w => selectedWorkspaceIds.includes(w.id));
+  const effectiveSelectedWorkspaceIds =
+    workspaceLocked && workspaceId && selectedWorkspaceIds.length === 0
+      ? [workspaceId]
+      : selectedWorkspaceIds;
+  const isAll = effectiveSelectedWorkspaceIds.length === 0;
+  const selectedWorkspaces = workspaces.filter(w => effectiveSelectedWorkspaceIds.includes(w.id));
 
   // Build label for the pill
   let pillLabel: React.ReactNode;

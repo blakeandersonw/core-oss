@@ -24,6 +24,10 @@ from api.services.calendar import (
 )
 from api.dependencies import get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
+from api.services.workspaces.client_workspace import (
+    filter_calendar_rows,
+    get_workspace_contact_filters,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -197,7 +201,8 @@ async def get_all_events_endpoint(
     user_jwt: str = Depends(get_current_user_jwt),
     user_id: str = Depends(get_current_user_id),
     account_id: Optional[str] = Query(None, description="Filter by single account (ext_connection_id). Backward compatible."),
-    account_ids: Optional[str] = Query(None, description="Comma-separated list of account IDs. Takes precedence over account_id.")
+    account_ids: Optional[str] = Query(None, description="Comma-separated list of account IDs. Takes precedence over account_id."),
+    workspace_id: Optional[str] = Query(None, description="Filter to events involving this workspace's client contacts/domains"),
 ):
     """
     Get all calendar events for a specific user.
@@ -238,6 +243,16 @@ async def get_all_events_endpoint(
                 detail=result.get("error", "Failed to fetch events from calendar service")
             )
 
+        if workspace_id:
+            filters = await get_workspace_contact_filters(user_jwt, workspace_id)
+            filtered_events = filter_calendar_rows(result.get("events") or [], filters)
+            result = {
+                **result,
+                "events": filtered_events,
+                "workspace_id": workspace_id,
+                "workspace_filtered": True,
+            }
+
         event_count = len(result.get('events', []))
         logger.info(f"📅 [CALENDAR] Found {event_count} events for user {user_id} (unified={result.get('unified', True)})")
         return result
@@ -250,7 +265,8 @@ async def get_today_events_endpoint(
     user_jwt: str = Depends(get_current_user_jwt),
     user_id: str = Depends(get_current_user_id),
     account_id: Optional[str] = Query(None, description="Filter by single account (ext_connection_id). Backward compatible."),
-    account_ids: Optional[str] = Query(None, description="Comma-separated list of account IDs. Takes precedence over account_id.")
+    account_ids: Optional[str] = Query(None, description="Comma-separated list of account IDs. Takes precedence over account_id."),
+    workspace_id: Optional[str] = Query(None, description="Filter to events involving this workspace's client contacts/domains"),
 ):
     """
     Get calendar events for today for a specific user.
@@ -290,6 +306,16 @@ async def get_today_events_endpoint(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=result.get("error", "Failed to fetch today's events from calendar service")
             )
+
+        if workspace_id:
+            filters = await get_workspace_contact_filters(user_jwt, workspace_id)
+            filtered_events = filter_calendar_rows(result.get("events") or [], filters)
+            result = {
+                **result,
+                "events": filtered_events,
+                "workspace_id": workspace_id,
+                "workspace_filtered": True,
+            }
 
         event_count = len(result.get('events', []))
         logger.info(f"📅 [CALENDAR] Found {event_count} events for today for user {user_id} (unified={result.get('unified', True)})")

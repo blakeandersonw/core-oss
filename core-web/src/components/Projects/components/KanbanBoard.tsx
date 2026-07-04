@@ -143,8 +143,15 @@ export default function KanbanBoard() {
     filters.assigneeIds.length > 0 ||
     filters.labelIds.length > 0 ||
     filters.priorities.length > 0 ||
+    filters.types.length > 0 ||
+    filters.tags.length > 0 ||
+    filters.createdByIds.length > 0 ||
+    filters.lastEditedByIds.length > 0 ||
+    filters.complexities.length > 0 ||
     !!filters.dueFrom ||
-    !!filters.dueTo;
+    !!filters.dueTo ||
+    !!filters.targetDueFrom ||
+    !!filters.targetDueTo;
 
   const filteredIssues = useMemo(() => {
     if (!issues.length) return [];
@@ -153,16 +160,27 @@ export default function KanbanBoard() {
     const hasAssigneeFilter = filters.assigneeIds.length > 0;
     const hasLabelFilter = filters.labelIds.length > 0;
     const hasPriorityFilter = filters.priorities.length > 0;
+    const hasTypeFilter = filters.types.length > 0;
+    const hasTagFilter = filters.tags.length > 0;
+    const hasCreatedByFilter = filters.createdByIds.length > 0;
+    const hasLastEditedByFilter = filters.lastEditedByIds.length > 0;
+    const hasComplexityFilter = filters.complexities.length > 0;
     const dueFrom = filters.dueFrom ? new Date(filters.dueFrom) : null;
     const dueTo = filters.dueTo ? new Date(filters.dueTo) : null;
+    const targetDueFrom = filters.targetDueFrom ? new Date(filters.targetDueFrom) : null;
+    const targetDueTo = filters.targetDueTo ? new Date(filters.targetDueTo) : null;
     if (dueFrom) dueFrom.setHours(0, 0, 0, 0);
     if (dueTo) dueTo.setHours(23, 59, 59, 999);
+    if (targetDueFrom) targetDueFrom.setHours(0, 0, 0, 0);
+    if (targetDueTo) targetDueTo.setHours(23, 59, 59, 999);
 
     return issues.filter((issue) => {
       if (searchLower) {
         const title = issue.title?.toLowerCase() || '';
         const description = issue.description?.toLowerCase() || '';
-        if (!title.includes(searchLower) && !description.includes(searchLower)) {
+        const type = issue.type?.toLowerCase() || '';
+        const tags = (issue.tags || []).join(' ').toLowerCase();
+        if (!title.includes(searchLower) && !description.includes(searchLower) && !type.includes(searchLower) && !tags.includes(searchLower)) {
           return false;
         }
       }
@@ -182,11 +200,33 @@ export default function KanbanBoard() {
       if (hasPriorityFilter && !filters.priorities.includes(issue.priority || 0)) {
         return false;
       }
+      if (hasTypeFilter && !filters.types.includes(issue.type || '')) {
+        return false;
+      }
+      if (hasTagFilter) {
+        const issueTags = issue.tags || [];
+        if (!issueTags.some((tag) => filters.tags.includes(tag))) return false;
+      }
+      if (hasCreatedByFilter && (!issue.created_by || !filters.createdByIds.includes(issue.created_by))) {
+        return false;
+      }
+      if (hasLastEditedByFilter && (!issue.last_edited_by || !filters.lastEditedByIds.includes(issue.last_edited_by))) {
+        return false;
+      }
+      if (hasComplexityFilter && !filters.complexities.includes(issue.complexity ?? -1)) {
+        return false;
+      }
       if (dueFrom || dueTo) {
         if (!issue.due_at) return false;
         const dueDate = new Date(issue.due_at);
         if (dueFrom && dueDate < dueFrom) return false;
         if (dueTo && dueDate > dueTo) return false;
+      }
+      if (targetDueFrom || targetDueTo) {
+        if (!issue.target_due_at) return false;
+        const targetDueDate = new Date(issue.target_due_at);
+        if (targetDueFrom && targetDueDate < targetDueFrom) return false;
+        if (targetDueTo && targetDueDate > targetDueTo) return false;
       }
       return true;
     });

@@ -62,6 +62,12 @@ export default function ChatView() {
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
   const mentionWorkspaceId = workspaceId || activeWorkspaceId || null;
 
+  useEffect(() => {
+    if (workspaceId) {
+      setSelectedWorkspaceIds([workspaceId]);
+    }
+  }, [workspaceId]);
+
   const handleMentionSelect = useCallback((data: MentionData) => {
     setMentions((prev) => {
       if (prev.some((m) => m.entityId === data.entityId)) return prev;
@@ -340,7 +346,7 @@ export default function ChatView() {
       // Need a conversation ID for uploads
       let convId = activeConversationRef.current;
       if (!convId) {
-        const conversation = await createConversation();
+        const conversation = await createConversation(undefined, workspaceId ?? null);
         convId = conversation.id;
         activeConversationRef.current = convId;
         justCreatedConversationRef.current = true;
@@ -372,7 +378,7 @@ export default function ChatView() {
     // Create conversation if needed (silently update URL, no re-render)
     let convId = activeConversationRef.current;
     if (!convId) {
-      const conversation = await createConversation();
+      const conversation = await createConversation(undefined, workspaceId ?? null);
       convId = conversation.id;
       activeConversationRef.current = convId;
       // Flag to prevent the loadMessages effect from firing when hasChattedThisSession changes
@@ -710,7 +716,7 @@ export default function ChatView() {
               selectedWorkspaceIds={selectedWorkspaceIds}
               workspaces={workspaces}
               onWorkspaceChange={setSelectedWorkspaceIds}
-              workspaceLocked={messages.length > 0}
+              workspaceLocked={!!workspaceId || messages.length > 0}
               mentions={mentions}
               onMentionSelect={handleMentionSelect}
               onRemoveMention={handleRemoveMention}

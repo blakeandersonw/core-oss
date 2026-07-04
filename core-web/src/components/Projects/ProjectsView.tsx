@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useProjectsStore } from "../../stores/projectsStore";
-import { useProjectBoards, usePrefetchBoards } from "../../hooks/queries/useProjects";
+import { useProjectBoard, useProjectBoards, usePrefetchBoards } from "../../hooks/queries/useProjects";
 import { updateProjectBoard, deleteProjectBoard } from "../../api/client";
 import { useQueryClient } from "@tanstack/react-query";
 import ProjectSidebar from "./components/ProjectSidebar";
@@ -40,6 +40,7 @@ export default function ProjectsView() {
 
   // React Query: fetch boards for auto-select
   const { data: boards = [] } = useProjectBoards(workspaceAppId);
+  const { data: activeBoardData } = useProjectBoard(activeProjectId);
   const prefetchBoards = usePrefetchBoards();
   const hasPrefetchedRef = useRef<string | null>(null);
 
@@ -204,6 +205,7 @@ export default function ProjectsView() {
         boardId={activeProjectId}
         boardName={activeBoard?.name || ""}
         boardDescription={activeBoard?.description || ""}
+        states={activeBoardData?.states || []}
         initialTab={settingsModalTab}
         onSave={handleSaveBoardSettings}
         onDelete={handleDeleteBoard}

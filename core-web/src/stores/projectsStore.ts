@@ -25,6 +25,13 @@ interface ProjectFilters {
   labelIds: string[];
   dueFrom: string;
   dueTo: string;
+  targetDueFrom: string;
+  targetDueTo: string;
+  types: string[];
+  tags: string[];
+  createdByIds: string[];
+  lastEditedByIds: string[];
+  complexities: number[];
   priorities: number[];
   showActiveOnly: boolean;
 }
@@ -71,6 +78,13 @@ export const useProjectsStore = create<ProjectsState>()(
         labelIds: [],
         dueFrom: '',
         dueTo: '',
+        targetDueFrom: '',
+        targetDueTo: '',
+        types: [],
+        tags: [],
+        createdByIds: [],
+        lastEditedByIds: [],
+        complexities: [],
         priorities: [],
         showActiveOnly: false,
       },
@@ -123,6 +137,13 @@ export const useProjectsStore = create<ProjectsState>()(
             labelIds: [],
             dueFrom: '',
             dueTo: '',
+            targetDueFrom: '',
+            targetDueTo: '',
+            types: [],
+            tags: [],
+            createdByIds: [],
+            lastEditedByIds: [],
+            complexities: [],
             priorities: [],
             showActiveOnly: false,
           },

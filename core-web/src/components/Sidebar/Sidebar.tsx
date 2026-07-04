@@ -45,8 +45,25 @@ import {
   getPresignedUploadUrl,
   confirmFileUpload,
   reorderWorkspaceApps,
+  getWorkspaceClientContacts,
+  createWorkspaceClientContact,
+  deleteWorkspaceClientContact,
+  getWorkspaceConnectors,
+  saveWorkspaceConnector,
+  deleteWorkspaceConnector,
+  getWorkspaceApiKeys,
+  createWorkspaceApiKey,
+  revokeWorkspaceApiKey,
+  getWorkspaceWebhooks,
+  createWorkspaceWebhook,
+  deleteWorkspaceWebhook,
+  getWorkspaceMcpManifest,
   type WorkspaceInvitation,
   type WorkspaceMember,
+  type WorkspaceClientContact,
+  type WorkspaceConnector,
+  type WorkspaceApiKey,
+  type WorkspaceWebhook,
 } from "../../api/client";
 import { resolveUploadMimeType } from "../../utils/uploadMime";
 
@@ -123,7 +140,7 @@ const getAppPath = (workspaceId: string, appType: string) =>
   `/workspace/${workspaceId}/${appType}`;
 
 type ModalType = "createWorkspace" | "workspaceSettings" | "dashboardSettings" | null;
-type WorkspaceSettingsTab = "members" | "apps" | "settings";
+type WorkspaceSettingsTab = "members" | "apps" | "settings" | "connectors" | "developer";
 
 
 function SelfPresenceAvatar({ avatarUrl, name, fallbackLetter, userId }: {
@@ -206,6 +223,17 @@ export default function Sidebar() {
   const membersCache = useRef<
     Map<string, (WorkspaceMember & { email?: string; name?: string; avatar_url?: string })[]>
   >(new Map());
+  const [clientContacts, setClientContacts] = useState<WorkspaceClientContact[]>([]);
+  const [contactKind, setContactKind] = useState<"email" | "domain">("email");
+  const [contactValue, setContactValue] = useState("");
+  const [connectors, setConnectors] = useState<WorkspaceConnector[]>([]);
+  const [apiKeys, setApiKeys] = useState<WorkspaceApiKey[]>([]);
+  const [newApiKey, setNewApiKey] = useState<string | null>(null);
+  const [webhooks, setWebhooks] = useState<WorkspaceWebhook[]>([]);
+  const [mcpManifest, setMcpManifest] = useState<Record<string, unknown> | null>(null);
+  const [developerAccessName, setDeveloperAccessName] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [settingsTabLoading, setSettingsTabLoading] = useState(false);
 
   // Refs for dropdown triggers
   const menuButtonRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -260,6 +288,33 @@ export default function Sidebar() {
       setPendingInvites([]);
     } finally {
       setPendingInvitesLoading(false);
+    }
+  }, []);
+
+  const loadWorkspaceAccessData = useCallback(async (workspaceId: string, tab: WorkspaceSettingsTab) => {
+    if (tab !== "members" && tab !== "connectors" && tab !== "developer") return;
+    setSettingsTabLoading(true);
+    try {
+      if (tab === "members") {
+        const contacts = await getWorkspaceClientContacts(workspaceId);
+        setClientContacts(contacts);
+      } else if (tab === "connectors") {
+        const data = await getWorkspaceConnectors(workspaceId);
+        setConnectors(data);
+      } else if (tab === "developer") {
+        const [keys, hooks, manifest] = await Promise.all([
+          getWorkspaceApiKeys(workspaceId),
+          getWorkspaceWebhooks(workspaceId),
+          getWorkspaceMcpManifest(workspaceId),
+        ]);
+        setApiKeys(keys);
+        setWebhooks(hooks);
+        setMcpManifest(manifest);
+      }
+    } catch (err) {
+      console.error("Failed to load workspace access data:", err);
+    } finally {
+      setSettingsTabLoading(false);
     }
   }, []);
 
@@ -390,6 +445,7 @@ export default function Sidebar() {
 
       // Load pending invites
       void loadPendingInvites(workspaceId);
+      void loadWorkspaceAccessData(workspaceId, tab);
 
       // Load members
       const cached = membersCache.current.get(workspaceId);
@@ -416,6 +472,12 @@ export default function Sidebar() {
       }
     }
   };
+
+  useEffect(() => {
+    if (modalType === "workspaceSettings" && selectedWorkspaceId) {
+      void loadWorkspaceAccessData(selectedWorkspaceId, workspaceSettingsTab);
+    }
+  }, [modalType, selectedWorkspaceId, workspaceSettingsTab, loadWorkspaceAccessData]);
 
   const moveAppUp = (index: number) => {
     if (index === 0) return;
@@ -681,6 +743,80 @@ export default function Sidebar() {
     } catch (err) {
       console.error("Failed to update role:", err);
     }
+  };
+
+  const handleAddClientContact = async () => {
+    if (!selectedWorkspaceId || !contactValue.trim()) return;
+    const contact = await createWorkspaceClientContact(selectedWorkspaceId, {
+      kind: contactKind,
+      value: contactValue.trim(),
+    });
+    setClientContacts((prev) => [...prev, contact].sort((a, b) => a.value.localeCompare(b.value)));
+    setContactValue("");
+  };
+
+  const handleDeleteClientContact = async (contactId: string) => {
+    if (!selectedWorkspaceId) return;
+    await deleteWorkspaceClientContact(selectedWorkspaceId, contactId);
+    setClientContacts((prev) => prev.filter((contact) => contact.id !== contactId));
+  };
+
+  const handlePrepareGithubConnector = async () => {
+    if (!selectedWorkspaceId) return;
+    const connector = await saveWorkspaceConnector(selectedWorkspaceId, {
+      provider: "github",
+      display_name: "GitHub",
+      status: "pending",
+      scopes: ["repo", "issues", "pull_requests"],
+      metadata: { source: "composio" },
+    });
+    setConnectors((prev) => [connector, ...prev.filter((item) => item.id !== connector.id)]);
+  };
+
+  const handleDeleteConnector = async (connectorId: string) => {
+    if (!selectedWorkspaceId) return;
+    await deleteWorkspaceConnector(selectedWorkspaceId, connectorId);
+    setConnectors((prev) => prev.filter((connector) => connector.id !== connectorId));
+  };
+
+  const handleCreateApiKey = async () => {
+    if (!selectedWorkspaceId || !developerAccessName.trim()) return;
+    const apiKey = await createWorkspaceApiKey(selectedWorkspaceId, {
+      name: developerAccessName.trim(),
+      scopes: ["projects:read", "contacts:read", "connectors:read"],
+    });
+    setApiKeys((prev) => [apiKey, ...prev]);
+    setNewApiKey(apiKey.key || null);
+    setDeveloperAccessName("");
+  };
+
+  const handleRevokeApiKey = async (apiKeyId: string) => {
+    if (!selectedWorkspaceId) return;
+    await revokeWorkspaceApiKey(selectedWorkspaceId, apiKeyId);
+    setApiKeys((prev) =>
+      prev.map((key) =>
+        key.id === apiKeyId ? { ...key, revoked_at: new Date().toISOString() } : key,
+      ),
+    );
+  };
+
+  const handleCreateWebhook = async () => {
+    if (!selectedWorkspaceId || !developerAccessName.trim() || !webhookUrl.trim()) return;
+    const webhook = await createWorkspaceWebhook(selectedWorkspaceId, {
+      name: developerAccessName.trim(),
+      url: webhookUrl.trim(),
+      events: ["project.issue.updated", "project.comment.created", "connector.status.changed"],
+    });
+    setWebhooks((prev) => [webhook, ...prev]);
+    setNewApiKey(webhook.secret || null);
+    setDeveloperAccessName("");
+    setWebhookUrl("");
+  };
+
+  const handleDeleteWebhook = async (webhookId: string) => {
+    if (!selectedWorkspaceId) return;
+    await deleteWorkspaceWebhook(selectedWorkspaceId, webhookId);
+    setWebhooks((prev) => prev.filter((webhook) => webhook.id !== webhookId));
   };
 
   useEffect(() => {
@@ -1271,7 +1407,7 @@ export default function Sidebar() {
       >
         <div className="flex flex-col" style={{ minHeight: 420 }}>
           {/* Tabs */}
-          <div className="flex gap-4 mb-4">
+          <div className="flex flex-wrap gap-4 mb-4">
             <button
               onClick={() => setWorkspaceSettingsTab("members")}
               className={`pb-2 text-sm font-medium transition-colors relative ${
@@ -1308,6 +1444,32 @@ export default function Sidebar() {
             >
               Workspace Settings
               {workspaceSettingsTab === "settings" && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-900 rounded-full" />
+              )}
+            </button>
+            <button
+              onClick={() => setWorkspaceSettingsTab("connectors")}
+              className={`pb-2 text-sm font-medium transition-colors relative ${
+                workspaceSettingsTab === "connectors"
+                  ? "text-gray-900"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Connectors
+              {workspaceSettingsTab === "connectors" && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-900 rounded-full" />
+              )}
+            </button>
+            <button
+              onClick={() => setWorkspaceSettingsTab("developer")}
+              className={`pb-2 text-sm font-medium transition-colors relative ${
+                workspaceSettingsTab === "developer"
+                  ? "text-gray-900"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              API & MCP
+              {workspaceSettingsTab === "developer" && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-900 rounded-full" />
               )}
             </button>
@@ -1499,6 +1661,60 @@ export default function Sidebar() {
                   )}
                 </div>
               </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-text-tertiary mb-1.5">
+                  Client email and calendar scope
+                </p>
+                <div className="flex gap-2 mb-2">
+                  <select
+                    value={contactKind}
+                    onChange={(e) => setContactKind(e.target.value as "email" | "domain")}
+                    className="bg-white border border-border-gray rounded-lg px-2 py-2 text-xs outline-none"
+                    disabled={!canManageWorkspaceMembers}
+                  >
+                    <option value="email">Email</option>
+                    <option value="domain">Domain</option>
+                  </select>
+                  <input
+                    value={contactValue}
+                    onChange={(e) => setContactValue(e.target.value)}
+                    placeholder={contactKind === "email" ? "client@example.com" : "example.com"}
+                    className="flex-1 bg-white border border-border-gray rounded-lg px-3 py-2 text-xs outline-none"
+                    disabled={!canManageWorkspaceMembers}
+                  />
+                  <button
+                    onClick={handleAddClientContact}
+                    disabled={!canManageWorkspaceMembers || !contactValue.trim()}
+                    className="px-3 py-2 text-xs bg-black text-white rounded-lg disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                </div>
+                {settingsTabLoading ? (
+                  <p className="text-xs text-text-secondary">Loading...</p>
+                ) : clientContacts.length === 0 ? (
+                  <p className="text-xs text-text-secondary">No client contacts configured</p>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {clientContacts.map((contact) => (
+                      <div key={contact.id} className="flex items-center justify-between px-3 py-2 bg-bg-gray rounded-lg">
+                        <div>
+                          <p className="text-sm">{contact.value}</p>
+                          <p className="text-[10px] text-text-secondary capitalize">{contact.kind}</p>
+                        </div>
+                        {canManageWorkspaceMembers && (
+                          <button
+                            onClick={() => handleDeleteClientContact(contact.id)}
+                            className="text-xs text-red-500 hover:bg-red-50 px-2 py-1 rounded"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               </div>
               {/* Footer spacer to match Apps tab */}
               <div className="pt-4 mt-auto border-t border-border-light" />
@@ -1682,6 +1898,157 @@ export default function Sidebar() {
                 >
                   {isSaving ? "Saving..." : "Save"}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Connectors Tab */}
+          {workspaceSettingsTab === "connectors" && (
+            <div className="flex flex-col gap-4 flex-1">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-text-body">Third-party integrations</p>
+                  <p className="text-xs text-text-secondary">Workspace-level connections powered by Composio.</p>
+                </div>
+                {canManageWorkspaceMembers && (
+                  <button
+                    onClick={handlePrepareGithubConnector}
+                    className="px-3 py-2 text-xs bg-black text-white rounded-lg"
+                  >
+                    Add GitHub
+                  </button>
+                )}
+              </div>
+              {settingsTabLoading ? (
+                <p className="text-xs text-text-secondary">Loading...</p>
+              ) : connectors.length === 0 ? (
+                <p className="text-xs text-text-secondary">No connectors configured</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {connectors.map((connector) => (
+                    <div key={connector.id} className="flex items-center justify-between px-3 py-3 border border-border-light rounded-lg">
+                      <div>
+                        <p className="text-sm font-medium">{connector.display_name || connector.provider}</p>
+                        <p className="text-[11px] text-text-secondary capitalize">
+                          {connector.status} {connector.scopes.length ? `• ${connector.scopes.join(", ")}` : ""}
+                        </p>
+                      </div>
+                      {canManageWorkspaceMembers && (
+                        <button
+                          onClick={() => handleDeleteConnector(connector.id)}
+                          className="text-xs text-red-500 hover:bg-red-50 px-2 py-1 rounded"
+                        >
+                          Disconnect
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="pt-4 mt-auto border-t border-border-light" />
+            </div>
+          )}
+
+          {/* API & MCP Tab */}
+          {workspaceSettingsTab === "developer" && (
+            <div className="flex flex-col gap-4 flex-1 overflow-y-auto" style={{ maxHeight: 420 }}>
+              {newApiKey && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-xs font-medium text-amber-900 mb-1">Secret shown once</p>
+                  <code className="block text-[11px] break-all text-amber-900">{newApiKey}</code>
+                  <button
+                    onClick={() => {
+                      void copyTextToClipboard(newApiKey);
+                      setNewApiKey(null);
+                    }}
+                    className="mt-2 text-xs px-2 py-1 bg-white border border-amber-200 rounded"
+                  >
+                    Copy and hide
+                  </button>
+                </div>
+              )}
+              <div>
+                <p className="text-sm font-medium text-text-body mb-2">Workspace API keys</p>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    value={developerAccessName}
+                    onChange={(e) => setDeveloperAccessName(e.target.value)}
+                    placeholder="Key or webhook name"
+                    className="flex-1 bg-white border border-border-gray rounded-lg px-3 py-2 text-xs outline-none"
+                    disabled={!canManageWorkspaceMembers}
+                  />
+                  <button
+                    onClick={handleCreateApiKey}
+                    disabled={!canManageWorkspaceMembers || !developerAccessName.trim()}
+                    className="px-3 py-2 text-xs bg-black text-white rounded-lg disabled:opacity-50"
+                  >
+                    New key
+                  </button>
+                </div>
+                <div className="flex flex-col gap-1">
+                  {apiKeys.length === 0 ? (
+                    <p className="text-xs text-text-secondary">No API keys</p>
+                  ) : apiKeys.map((apiKey) => (
+                    <div key={apiKey.id} className="flex items-center justify-between px-3 py-2 bg-bg-gray rounded-lg">
+                      <div>
+                        <p className="text-sm">{apiKey.name}</p>
+                        <p className="text-[10px] text-text-secondary">
+                          {apiKey.key_prefix}... {apiKey.revoked_at ? "• revoked" : `• ${apiKey.scopes.join(", ")}`}
+                        </p>
+                      </div>
+                      {!apiKey.revoked_at && canManageWorkspaceMembers && (
+                        <button onClick={() => handleRevokeApiKey(apiKey.id)} className="text-xs text-red-500 px-2 py-1 rounded hover:bg-red-50">
+                          Revoke
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text-body mb-2">MCP endpoint</p>
+                <code className="block text-[11px] bg-bg-gray rounded-lg p-2 break-all">
+                  /api/mcp/workspaces/{selectedWorkspaceId}/manifest
+                </code>
+                <p className="text-[11px] text-text-secondary mt-1">
+                  Tools: {Array.isArray(mcpManifest?.tools) ? mcpManifest.tools.length : 0}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text-body mb-2">Webhooks</p>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    value={webhookUrl}
+                    onChange={(e) => setWebhookUrl(e.target.value)}
+                    placeholder="https://example.com/webhook"
+                    className="flex-1 bg-white border border-border-gray rounded-lg px-3 py-2 text-xs outline-none"
+                    disabled={!canManageWorkspaceMembers}
+                  />
+                  <button
+                    onClick={handleCreateWebhook}
+                    disabled={!canManageWorkspaceMembers || !developerAccessName.trim() || !webhookUrl.trim()}
+                    className="px-3 py-2 text-xs bg-black text-white rounded-lg disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                </div>
+                <div className="flex flex-col gap-1">
+                  {webhooks.length === 0 ? (
+                    <p className="text-xs text-text-secondary">No webhooks</p>
+                  ) : webhooks.map((webhook) => (
+                    <div key={webhook.id} className="flex items-center justify-between px-3 py-2 bg-bg-gray rounded-lg">
+                      <div className="min-w-0">
+                        <p className="text-sm truncate">{webhook.name}</p>
+                        <p className="text-[10px] text-text-secondary truncate">{webhook.url}</p>
+                      </div>
+                      {canManageWorkspaceMembers && (
+                        <button onClick={() => handleDeleteWebhook(webhook.id)} className="text-xs text-red-500 px-2 py-1 rounded hover:bg-red-50">
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}

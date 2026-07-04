@@ -6,6 +6,10 @@ Uses async Supabase client for non-blocking I/O.
 from typing import Dict, Any, List, Optional
 import logging
 from lib.supabase_client import get_authenticated_async_client
+from api.services.projects.access import (
+    get_state_context,
+    require_board_capability,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +41,13 @@ async def get_states(
 
 async def create_state(
     user_jwt: str,
+    user_id: str,
     board_id: str,
     name: str,
     color: Optional[str] = None,
     is_done: bool = False,
+    is_locked: bool = False,
+    wip_limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Create a new state in a board.
@@ -56,6 +63,12 @@ async def create_state(
         Created state dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    await require_board_capability(
+        supabase,
+        user_id=user_id,
+        board_id=board_id,
+        capability="manage_states",
+    )
 
     # Look up board to get workspace context
     board_result = await supabase.table("project_boards")\
@@ -75,9 +88,12 @@ async def create_state(
         "name": name,
         "position": position,
         "is_done": is_done,
+        "is_locked": is_locked,
     }
     if color is not None:
         state_data["color"] = color
+    if wip_limit is not None:
+        state_data["wip_limit"] = wip_limit
 
     result = await supabase.table("project_states")\
         .insert(state_data)\
@@ -90,10 +106,14 @@ async def create_state(
 
 async def update_state(
     user_jwt: str,
+    user_id: str,
     state_id: str,
     name: Optional[str] = None,
     color: Optional[str] = None,
     is_done: Optional[bool] = None,
+    is_locked: Optional[bool] = None,
+    wip_limit: Optional[int] = None,
+    clear_wip_limit: bool = False,
 ) -> Dict[str, Any]:
     """
     Update a state's fields.
@@ -109,6 +129,13 @@ async def update_state(
         Updated state dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    state = await get_state_context(supabase, state_id)
+    await require_board_capability(
+        supabase,
+        user_id=user_id,
+        board_id=state["board_id"],
+        capability="manage_states",
+    )
 
     updates: Dict[str, Any] = {}
     if name is not None:
@@ -117,6 +144,12 @@ async def update_state(
         updates["color"] = color
     if is_done is not None:
         updates["is_done"] = is_done
+    if is_locked is not None:
+        updates["is_locked"] = is_locked
+    if wip_limit is not None:
+        updates["wip_limit"] = wip_limit
+    if clear_wip_limit:
+        updates["wip_limit"] = None
 
     if not updates:
         result = await supabase.table("project_states")\
@@ -139,6 +172,7 @@ async def update_state(
 
 async def delete_state(
     user_jwt: str,
+    user_id: str,
     state_id: str,
 ) -> Dict[str, Any]:
     """
@@ -152,6 +186,13 @@ async def delete_state(
         Status dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    state = await get_state_context(supabase, state_id)
+    await require_board_capability(
+        supabase,
+        user_id=user_id,
+        board_id=state["board_id"],
+        capability="manage_states",
+    )
 
     await supabase.table("project_states")\
         .delete()\
@@ -165,6 +206,7 @@ async def delete_state(
 
 async def reorder_states(
     user_jwt: str,
+    user_id: str,
     board_id: str,
     items: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -180,6 +222,12 @@ async def reorder_states(
         Dict with updated_count
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    await require_board_capability(
+        supabase,
+        user_id=user_id,
+        board_id=board_id,
+        capability="manage_states",
+    )
 
     try:
         result = await supabase.rpc(

@@ -5,7 +5,9 @@ Uses async Supabase client for non-blocking I/O.
 """
 from typing import Dict, Any, List, Optional
 import logging
+from fastapi import HTTPException, status
 from lib.supabase_client import get_authenticated_async_client
+from api.services.projects.access import require_board_capability
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,15 @@ async def create_board(
         .single()\
         .execute()
     workspace_id = app_result.data["workspace_id"]
+    is_admin = await supabase.rpc(
+        "is_workspace_admin",
+        {"p_workspace_id": workspace_id},
+    ).execute()
+    if is_admin.data is not True:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workspace admin access required to create project boards",
+        )
 
     # Get next position
     position = await _get_next_board_position(supabase, workspace_app_id)
@@ -156,12 +167,15 @@ async def create_board(
 
 async def update_board(
     user_jwt: str,
+    user_id: str,
     board_id: str,
     name: Optional[str] = None,
     description: Optional[str] = None,
     icon: Optional[str] = None,
     color: Optional[str] = None,
     key: Optional[str] = None,
+    default_role_capabilities: Optional[Dict[str, Any]] = None,
+    enforce_column_limits: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Update a board's fields.
@@ -179,6 +193,12 @@ async def update_board(
         Updated board dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    await require_board_capability(
+        supabase,
+        user_id=user_id,
+        board_id=board_id,
+        capability="manage_board",
+    )
 
     updates: Dict[str, Any] = {}
     if name is not None:
@@ -191,6 +211,10 @@ async def update_board(
         updates["color"] = color
     if key is not None:
         updates["key"] = key
+    if default_role_capabilities is not None:
+        updates["default_role_capabilities"] = default_role_capabilities
+    if enforce_column_limits is not None:
+        updates["enforce_column_limits"] = enforce_column_limits
 
     if not updates:
         # Nothing to update, just return current board
@@ -209,6 +233,7 @@ async def update_board(
 
 async def delete_board(
     user_jwt: str,
+    user_id: str,
     board_id: str,
 ) -> Dict[str, Any]:
     """
@@ -222,6 +247,12 @@ async def delete_board(
         Status dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    await require_board_capability(
+        supabase,
+        user_id=user_id,
+        board_id=board_id,
+        capability="manage_board",
+    )
 
     await supabase.table("project_boards")\
         .delete()\

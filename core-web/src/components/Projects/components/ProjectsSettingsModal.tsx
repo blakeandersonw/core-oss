@@ -2,6 +2,17 @@ import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "motion/react";
 import { XMarkIcon, ChevronDownIcon } from "@heroicons/react/24/outline";
+import {
+  createProjectBoardView,
+  getProjectBoardRolePresets,
+  getProjectBoardViews,
+  saveProjectBoardRolePreset,
+  updateProjectBoard,
+  updateProjectState,
+  type ProjectBoardView,
+  type ProjectState,
+} from "../../../api/client";
+import { useProjectsStore } from "../../../stores/projectsStore";
 
 interface ProjectsSettingsModalProps {
   isOpen: boolean;
@@ -9,6 +20,7 @@ interface ProjectsSettingsModalProps {
   boardId: string | null;
   boardName: string;
   boardDescription?: string;
+  states?: ProjectState[];
   initialTab?: "board" | "app";
   onSave: (name: string, description: string) => Promise<void>;
   onDelete?: () => void;
@@ -20,6 +32,7 @@ export default function ProjectsSettingsModal({
   boardId: _boardId,
   boardName,
   boardDescription = "",
+  states = [],
   initialTab = "board",
   onSave,
   onDelete,
@@ -29,6 +42,12 @@ export default function ProjectsSettingsModal({
   const [editingDescription, setEditingDescription] = useState(boardDescription);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [roleCapabilities, setRoleCapabilities] = useState<Record<string, boolean>>({});
+  const [views, setViews] = useState<ProjectBoardView[]>([]);
+  const [viewName, setViewName] = useState("");
+  const [enforceColumnLimits, setEnforceColumnLimits] = useState(true);
+  const [stateControls, setStateControls] = useState<Record<string, { is_locked: boolean; wip_limit: string }>>({});
+  const filters = useProjectsStore((state) => state.filters);
 
   // Reset form when modal opens or board changes
   useEffect(() => {
@@ -37,20 +56,71 @@ export default function ProjectsSettingsModal({
       setEditingDescription(boardDescription);
       setShowAdvancedOptions(false);
       setActiveTab(initialTab);
+      setViewName("");
+      setStateControls(
+        Object.fromEntries(
+          states.map((state) => [
+            state.id,
+            {
+              is_locked: !!state.is_locked,
+              wip_limit: state.wip_limit == null ? "" : String(state.wip_limit),
+            },
+          ]),
+        ),
+      );
+      if (_boardId) {
+        void Promise.all([
+          getProjectBoardRolePresets(_boardId).then((data) => {
+            const memberPreset = data.role_presets.find((preset) => preset.role === "member");
+            setRoleCapabilities(memberPreset?.capabilities || data.capabilities || {});
+          }),
+          getProjectBoardViews(_boardId).then(setViews),
+        ]).catch((err) => console.error("Failed to load project settings:", err));
+      }
     }
-  }, [isOpen, boardName, boardDescription]);
+  }, [isOpen, boardName, boardDescription, _boardId, initialTab, states]);
 
   const handleSave = async () => {
     if (!editingName.trim() || isSaving) return;
     setIsSaving(true);
     try {
       await onSave(editingName.trim(), editingDescription.trim());
+      if (_boardId) {
+        await updateProjectBoard(_boardId, { enforce_column_limits: enforceColumnLimits });
+      }
       onClose();
     } catch (err) {
       console.error("Failed to save board settings:", err);
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSaveMemberPermissions = async () => {
+    if (!_boardId) return;
+    await saveProjectBoardRolePreset(_boardId, "member", roleCapabilities);
+  };
+
+  const handleSaveColumnControl = async (stateId: string) => {
+    const control = stateControls[stateId];
+    if (!control) return;
+    await updateProjectState(stateId, {
+      is_locked: control.is_locked,
+      wip_limit: control.wip_limit === "" ? undefined : Number(control.wip_limit),
+      clear_wip_limit: control.wip_limit === "",
+    });
+  };
+
+  const handleCreateView = async () => {
+    if (!_boardId || !viewName.trim()) return;
+    const view = await createProjectBoardView(_boardId, {
+      name: viewName.trim(),
+      filters: { ...filters },
+      layout: "kanban",
+      is_shared: true,
+    });
+    setViews((prev) => [view, ...prev]);
+    setViewName("");
   };
 
   const handleClose = () => {
@@ -160,6 +230,66 @@ export default function ProjectsSettingsModal({
                 </div>
               </div>
 
+              {states.length > 0 && (
+                <div className="border-t border-border-light pt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h3 className="text-xs font-medium text-text-secondary">
+                        Column controls
+                      </h3>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-text-secondary">
+                      <input
+                        type="checkbox"
+                        checked={enforceColumnLimits}
+                        onChange={(e) => setEnforceColumnLimits(e.target.checked)}
+                      />
+                      Enforce caps
+                    </label>
+                  </div>
+                  <div className="space-y-2">
+                    {states.map((state) => {
+                      const control = stateControls[state.id] || { is_locked: false, wip_limit: "" };
+                      return (
+                        <div key={state.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
+                          <span className="flex-1 text-sm truncate">{state.name}</span>
+                          <label className="flex items-center gap-1 text-xs text-text-secondary">
+                            <input
+                              type="checkbox"
+                              checked={control.is_locked}
+                              onChange={(e) =>
+                                setStateControls((prev) => ({
+                                  ...prev,
+                                  [state.id]: { ...control, is_locked: e.target.checked },
+                                }))
+                              }
+                            />
+                            Locked
+                          </label>
+                          <input
+                            value={control.wip_limit}
+                            onChange={(e) =>
+                              setStateControls((prev) => ({
+                                ...prev,
+                                [state.id]: { ...control, wip_limit: e.target.value.replace(/\D/g, "") },
+                              }))
+                            }
+                            placeholder="Cap"
+                            className="w-16 px-2 py-1 bg-white border border-border-gray rounded text-xs"
+                          />
+                          <button
+                            onClick={() => void handleSaveColumnControl(state.id)}
+                            className="px-2 py-1 text-xs bg-white border border-border-gray rounded"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Collapsible Advanced Options */}
               {onDelete && (
                 <div className="border-t border-border-light pt-4">
@@ -217,27 +347,63 @@ export default function ProjectsSettingsModal({
           <>
             {/* App Settings Tab Content */}
             <div className="overflow-y-auto flex-1 px-6 py-4">
-              <h3 className="text-sm font-medium text-gray-900 mb-4">
-                Permissions
-              </h3>
+              <h3 className="text-sm font-medium text-gray-900 mb-3">Member permissions</h3>
+              <div className="space-y-2 mb-5">
+                {[
+                  ["create_issue", "Create cards"],
+                  ["update_issue", "Edit cards"],
+                  ["move_issue", "Move cards"],
+                  ["assign_issue", "Assign cards"],
+                  ["comment_issue", "Comment"],
+                  ["delete_issue", "Delete cards"],
+                  ["manage_board", "Manage board"],
+                ].map(([key, label]) => (
+                  <label key={key} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <span className="text-sm text-gray-900">{label}</span>
+                    <input
+                      type="checkbox"
+                      checked={!!roleCapabilities[key]}
+                      onChange={(e) =>
+                        setRoleCapabilities((prev) => ({
+                          ...prev,
+                          [key]: e.target.checked,
+                        }))
+                      }
+                    />
+                  </label>
+                ))}
+                <button
+                  onClick={() => void handleSaveMemberPermissions()}
+                  className="px-3 py-2 text-xs bg-black text-white rounded-lg"
+                >
+                  Save permissions
+                </button>
+              </div>
+              <h3 className="text-sm font-medium text-gray-900 mb-3">Saved views</h3>
+              <div className="flex gap-2 mb-3">
+                <input
+                  value={viewName}
+                  onChange={(e) => setViewName(e.target.value)}
+                  placeholder="View name"
+                  className="flex-1 px-3 py-2 bg-white border border-border-gray rounded-lg text-sm outline-none"
+                />
+                <button
+                  onClick={() => void handleCreateView()}
+                  disabled={!viewName.trim()}
+                  className="px-3 py-2 text-xs bg-black text-white rounded-lg disabled:opacity-50"
+                >
+                  Save view
+                </button>
+              </div>
               <div className="space-y-1">
-                {/* Notifications Toggle */}
-                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">
-                      Notifications
-                    </p>
-                    <p className="text-[13px] text-gray-500">
-                      Receive notifications from this app
-                    </p>
+                {views.length === 0 ? (
+                  <p className="text-xs text-text-secondary">No saved views</p>
+                ) : views.map((view) => (
+                  <div key={view.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <span className="text-sm text-gray-900">{view.name}</span>
+                    <span className="text-[11px] text-gray-500">{view.layout}</span>
                   </div>
-                  <button
-                    className="relative w-11 h-6 bg-gray-200 rounded-full transition-colors cursor-not-allowed"
-                    disabled
-                  >
-                    <span className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform" />
-                  </button>
-                </div>
+                ))}
               </div>
             </div>
 

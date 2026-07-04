@@ -206,6 +206,7 @@ def create_full_app() -> FastAPI:
         users,
         webhooks,
         workers,
+        workspace_access,
         workspaces,
     )
 
@@ -219,6 +220,7 @@ def create_full_app() -> FastAPI:
 
     app.include_router(auth.router)
     app.include_router(workspaces.router)
+    app.include_router(workspace_access.router)
     app.include_router(invitations.router)
     app.include_router(calendar.router)
     app.include_router(email.router)

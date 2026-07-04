@@ -8,6 +8,13 @@ from datetime import datetime
 import logging
 from lib.supabase_client import get_authenticated_async_client
 from lib.image_proxy import generate_image_url
+from api.services.projects.access import (
+    enforce_state_accepts_issue,
+    get_state_context,
+    require_board_capability,
+    require_issue_capability,
+    resolve_board_capabilities,
+)
 from api.services.notifications.subscriptions import subscribe
 from api.services.notifications.create import notify_subscribers, NotificationType
 from api.services.notifications.helpers import get_actor_info
@@ -167,6 +174,10 @@ async def create_issue(
     description: Optional[str] = None,
     priority: int = 0,
     due_at: Optional[datetime] = None,
+    issue_type: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    target_due_at: Optional[datetime] = None,
+    complexity: Optional[int] = None,
     image_r2_keys: Optional[List[str]] = None,
     label_ids: Optional[List[str]] = None,
     assignee_ids: Optional[List[str]] = None,
@@ -191,6 +202,19 @@ async def create_issue(
         Created issue dict with label_objects, assignees, and image_urls
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    await require_board_capability(
+        supabase,
+        user_id=user_id,
+        board_id=board_id,
+        capability="create_issue",
+    )
+    target_state = await enforce_state_accepts_issue(
+        supabase,
+        user_id=user_id,
+        target_state_id=state_id,
+    )
+    if target_state["board_id"] != board_id:
+        raise ValueError("Target state does not belong to the board")
 
     # Allocate issue number atomically
     number_result = await supabase.rpc(
@@ -225,6 +249,14 @@ async def create_issue(
         issue_data["description"] = description
     if due_at is not None:
         issue_data["due_at"] = due_at.isoformat()
+    if issue_type is not None:
+        issue_data["type"] = issue_type
+    if tags is not None:
+        issue_data["tags"] = [tag.strip() for tag in tags if tag and tag.strip()]
+    if target_due_at is not None:
+        issue_data["target_due_at"] = target_due_at.isoformat()
+    if complexity is not None:
+        issue_data["complexity"] = complexity
     if image_r2_keys:
         # Filter out empty/None values
         valid_keys = [key for key in image_r2_keys if key]
@@ -306,12 +338,20 @@ async def create_issue(
 
 async def update_issue(
     user_jwt: str,
+    user_id: str,
     issue_id: str,
     title: Optional[str] = None,
     description: Optional[str] = None,
     priority: Optional[int] = None,
     due_at: Optional[datetime] = None,
     clear_due_at: bool = False,
+    issue_type: Optional[str] = None,
+    clear_type: bool = False,
+    tags: Optional[List[str]] = None,
+    target_due_at: Optional[datetime] = None,
+    clear_target_due_at: bool = False,
+    complexity: Optional[int] = None,
+    clear_complexity: bool = False,
     add_image_r2_keys: Optional[List[str]] = None,
     remove_image_r2_keys: Optional[List[str]] = None,
     image_r2_keys: Optional[List[str]] = None,
@@ -348,6 +388,12 @@ async def update_issue(
         Updated issue dict with label_objects, assignees, and image_urls
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    issue = await require_issue_capability(
+        supabase,
+        user_id=user_id,
+        issue_id=issue_id,
+        capability="update_issue",
+    )
 
     updates: Dict[str, Any] = {}
     if title is not None:
@@ -360,6 +406,20 @@ async def update_issue(
         updates["due_at"] = due_at.isoformat()
     if clear_due_at:
         updates["due_at"] = None
+    if issue_type is not None:
+        updates["type"] = issue_type
+    if clear_type:
+        updates["type"] = None
+    if tags is not None:
+        updates["tags"] = [tag.strip() for tag in tags if tag and tag.strip()]
+    if target_due_at is not None:
+        updates["target_due_at"] = target_due_at.isoformat()
+    if clear_target_due_at:
+        updates["target_due_at"] = None
+    if complexity is not None:
+        updates["complexity"] = complexity
+    if clear_complexity:
+        updates["complexity"] = None
 
     # Handle image operations (mutually exclusive, validated in router)
     if clear_images:
@@ -390,9 +450,24 @@ async def update_issue(
         updates["image_r2_keys"] = current_keys
 
     if state_id is not None:
+        await require_board_capability(
+            supabase,
+            user_id=user_id,
+            board_id=issue["board_id"],
+            capability="move_issue",
+        )
+        await enforce_state_accepts_issue(
+            supabase,
+            user_id=user_id,
+            target_state_id=state_id,
+            source_issue_id=issue_id,
+        )
         updates["state_id"] = state_id
     if position is not None:
         updates["position"] = position
+    if updates:
+        updates["last_edited_by"] = user_id
+        updates["last_edited_at"] = datetime.utcnow().isoformat()
 
     has_junction_updates = label_ids is not None or assignee_ids is not None
 
@@ -476,6 +551,7 @@ async def update_issue(
 
 async def delete_issue(
     user_jwt: str,
+    user_id: str,
     issue_id: str,
 ) -> Dict[str, Any]:
     """
@@ -489,6 +565,12 @@ async def delete_issue(
         Status dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    await require_issue_capability(
+        supabase,
+        user_id=user_id,
+        issue_id=issue_id,
+        capability="delete_issue",
+    )
 
     await supabase.table("project_issues")\
         .delete()\
@@ -521,6 +603,22 @@ async def move_issue(
         Updated issue dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    if not current_user_id:
+        raise ValueError("current_user_id is required to move issues")
+    issue = await require_issue_capability(
+        supabase,
+        user_id=current_user_id,
+        issue_id=issue_id,
+        capability="move_issue",
+    )
+    target_state = await enforce_state_accepts_issue(
+        supabase,
+        user_id=current_user_id,
+        target_state_id=target_state_id,
+        source_issue_id=issue_id,
+    )
+    if target_state["board_id"] != issue["board_id"]:
+        raise ValueError("Target state does not belong to the same board")
 
     # The move_project_issue RPC is required to keep ordering consistent.
     # A fallback update is not equivalent and can corrupt ordering under concurrency.
@@ -535,7 +633,10 @@ async def move_issue(
 
     # Fetch and return the updated issue
     result = await supabase.table("project_issues")\
-        .select("*")\
+        .update({
+            "last_edited_by": current_user_id,
+            "last_edited_at": datetime.utcnow().isoformat(),
+        })\
         .eq("id", issue_id)\
         .single()\
         .execute()
@@ -575,6 +676,7 @@ async def move_issue(
 
 async def reorder_issues(
     user_jwt: str,
+    user_id: str,
     state_id: str,
     items: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -590,6 +692,21 @@ async def reorder_issues(
         Dict with updated_count
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    state_context = await get_state_context(supabase, state_id)
+    await require_board_capability(
+        supabase,
+        user_id=user_id,
+        board_id=state_context["board_id"],
+        capability="move_issue",
+    )
+    capabilities = await resolve_board_capabilities(
+        supabase,
+        user_id=user_id,
+        board_id=state_context["board_id"],
+    )
+    if state_context.get("is_locked") and not capabilities.get("manage_board", False):
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This column is locked")
 
     try:
         result = await supabase.rpc(

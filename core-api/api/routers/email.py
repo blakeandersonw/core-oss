@@ -32,6 +32,10 @@ from api.dependencies import get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
 from lib.supabase_client import get_authenticated_supabase_client, get_authenticated_async_client
 from lib.token_encryption import decrypt_ext_connection_tokens
+from api.services.workspaces.client_workspace import (
+    filter_email_rows,
+    get_workspace_contact_filters,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -288,7 +292,8 @@ async def fetch_emails_endpoint(
     query: Optional[str] = None,
     label_ids: List[str] = Query(default=[]),
     account_id: Optional[str] = Query(None, description="Filter by single email account (backward compatible)"),
-    account_ids: List[str] = Query(default=[], description="Filter by multiple email accounts (unified view filter chips)")
+    account_ids: List[str] = Query(default=[], description="Filter by multiple email accounts (unified view filter chips)"),
+    workspace_id: Optional[str] = Query(None, description="Filter to emails involving this workspace's client contacts/domains"),
 ):
     """
     Fetch emails from database with optional filtering and pagination.
@@ -329,6 +334,16 @@ async def fetch_emails_endpoint(
             offset=offset,
             account_ids=effective_account_ids
         )
+        if workspace_id:
+            filters = await get_workspace_contact_filters(user_jwt, workspace_id)
+            filtered_emails = filter_email_rows(result.get("emails") or [], filters)
+            result = {
+                **result,
+                "emails": filtered_emails,
+                "count": len(filtered_emails),
+                "workspace_id": workspace_id,
+                "workspace_filtered": True,
+            }
         logger.info(f"✅ Fetched {result.get('count', 0)} emails (unified={result.get('unified', False)})")
         return result
     except Exception as e:

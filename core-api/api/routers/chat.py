@@ -36,6 +36,7 @@ class ConversationResponse(BaseModel):
     id: str
     user_id: str
     title: Optional[str] = None
+    workspace_id: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -81,6 +82,7 @@ async def get_current_user(
 
 class CreateConversationRequest(BaseModel):
     title: Optional[str] = "New Conversation"
+    workspace_id: Optional[str] = None
 
 class UpdateConversationRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=100)
@@ -139,6 +141,7 @@ class SendMessageRequest(BaseModel):
 
 @router.get("/conversations", response_model=List[ConversationResponse])
 async def list_conversations(
+    workspace_id: Optional[str] = None,
     user: Dict = Depends(get_current_user)
 ):
     """List all conversations for the current user"""
@@ -146,11 +149,12 @@ async def list_conversations(
     
     logger.info(f"💬 [CHAT SEARCH] User {user['id']} listing conversations")
     
-    response = await supabase.table("conversations")\
+    query = supabase.table("conversations")\
         .select("*")\
-        .eq("user_id", user['id'])\
-        .order("updated_at", desc=True)\
-        .execute()
+        .eq("user_id", user['id'])
+    if workspace_id:
+        query = query.eq("workspace_id", workspace_id)
+    response = await query.order("updated_at", desc=True).execute()
     
     conversation_count = len(response.data) if response.data else 0
     logger.info(f"💬 [CHAT SEARCH] Found {conversation_count} conversations for user {user['id']}")
@@ -164,11 +168,19 @@ async def create_conversation(
 ):
     """Create a new conversation"""
     supabase = await get_authenticated_async_client(user['jwt'])
+    if request.workspace_id:
+        membership = await supabase.rpc(
+            "is_workspace_member",
+            {"p_workspace_id": request.workspace_id},
+        ).execute()
+        if membership.data is not True:
+            raise HTTPException(status_code=403, detail="Workspace access required")
     
     response = await supabase.table("conversations")\
         .insert({
             "user_id": user['id'],
-            "title": request.title
+            "title": request.title,
+            "workspace_id": request.workspace_id,
         })\
         .execute()
         
@@ -210,13 +222,19 @@ async def delete_conversation(
 
     # Verify ownership
     conv_check = await supabase.table("conversations")\
-        .select("id")\
+        .select("id, workspace_id")\
         .eq("id", conversation_id)\
         .eq("user_id", user['id'])\
         .execute()
 
     if not conv_check.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    conversation_workspace_id = conv_check.data[0].get("workspace_id")
+    effective_workspace_ids = body.workspace_ids or ([body.workspace_id] if body.workspace_id else None)
+    if conversation_workspace_id:
+        if effective_workspace_ids and any(ws_id != conversation_workspace_id for ws_id in effective_workspace_ids):
+            raise HTTPException(status_code=403, detail="Conversation is locked to its workspace")
+        effective_workspace_ids = [conversation_workspace_id]
 
     # Get all attachment R2 keys for this conversation (before cascade delete)
     attachments_result = await supabase.table("chat_attachments")\
@@ -469,8 +487,6 @@ async def send_message(
 
         try:
             logger.info(f"[CHAT] User {user['id']} sending message in conversation {conversation_id} (timezone: {body.timezone}, attachments: {len(attachments)})")
-            # Resolve workspace_ids: prefer new array field, fall back to legacy single field
-            effective_workspace_ids = body.workspace_ids or ([body.workspace_id] if body.workspace_id else None)
             async for chunk in stream_chat_response(formatted_history, user['id'], user['jwt'], context_dict, body.timezone, attachments, effective_workspace_ids, is_disconnected=request.is_disconnected):
                 # Parse NDJSON to build blocks with proper interleaving
                 stripped_chunk = chunk.strip()
@@ -632,12 +648,13 @@ async def regenerate_message(
 
     # Verify ownership
     conv_check = await supabase.table("conversations") \
-        .select("id") \
+        .select("id, workspace_id") \
         .eq("id", conversation_id) \
         .eq("user_id", user['id']) \
         .execute()
     if not conv_check.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    conversation_workspace_id = conv_check.data[0].get("workspace_id")
 
     # Verify the target message exists and is an assistant message
     msg_check = await supabase.table("messages") \
@@ -706,6 +723,10 @@ async def regenerate_message(
             formatted_history.append({"role": msg["role"], "content": text_content})
 
     effective_workspace_ids = body.workspace_ids
+    if conversation_workspace_id:
+        if effective_workspace_ids and any(ws_id != conversation_workspace_id for ws_id in effective_workspace_ids):
+            raise HTTPException(status_code=403, detail="Conversation is locked to its workspace")
+        effective_workspace_ids = [conversation_workspace_id]
 
     async def generate():
         content_builder = ContentBuilder()

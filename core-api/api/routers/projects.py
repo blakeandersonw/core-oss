@@ -3,7 +3,7 @@ Projects router - HTTP endpoints for kanban-style boards with states and issues
 """
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from api.services.projects import (
     get_boards,
@@ -41,10 +41,31 @@ from api.services.projects import (
 )
 from api.dependencies import get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
+from lib.supabase_client import get_authenticated_async_client
+from api.services.projects.access import (
+    get_issue_context,
+    require_board_capability,
+    require_issue_capability,
+)
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+
+async def _require_issue_route_capability(
+    user_jwt: str,
+    user_id: str,
+    issue_id: str,
+    capability: str,
+) -> None:
+    supabase = await get_authenticated_async_client(user_jwt)
+    await require_issue_capability(
+        supabase,
+        user_id=user_id,
+        issue_id=issue_id,
+        capability=capability,
+    )
 
 
 # ============================================================================
@@ -68,6 +89,8 @@ class UpdateBoardRequest(BaseModel):
     icon: Optional[str] = None
     color: Optional[str] = None
     key: Optional[str] = Field(None, max_length=10)
+    default_role_capabilities: Optional[Dict[str, Any]] = None
+    enforce_column_limits: Optional[bool] = None
 
 
 class CreateStateRequest(BaseModel):
@@ -75,6 +98,8 @@ class CreateStateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     color: Optional[str] = None
     is_done: bool = False
+    is_locked: bool = False
+    wip_limit: Optional[int] = Field(None, ge=0)
 
 
 class UpdateStateRequest(BaseModel):
@@ -82,6 +107,9 @@ class UpdateStateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     color: Optional[str] = None
     is_done: Optional[bool] = None
+    is_locked: Optional[bool] = None
+    wip_limit: Optional[int] = Field(None, ge=0)
+    clear_wip_limit: bool = False
 
 
 class CreateIssueRequest(BaseModel):
@@ -92,6 +120,10 @@ class CreateIssueRequest(BaseModel):
     description: Optional[str] = None
     priority: int = Field(default=0, ge=0, le=4, description="0=none, 1=urgent, 2=high, 3=medium, 4=low")
     due_at: Optional[datetime] = None
+    type: Optional[str] = Field(None, max_length=80)
+    tags: Optional[List[str]] = None
+    target_due_at: Optional[datetime] = None
+    complexity: Optional[int] = Field(None, ge=0, le=5)
     image_r2_keys: Optional[List[str]] = Field(None, description="List of R2 keys for issue images")
     label_ids: Optional[List[str]] = None
     assignee_ids: Optional[List[str]] = None
@@ -111,6 +143,13 @@ class UpdateIssueRequest(BaseModel):
     priority: Optional[int] = Field(None, ge=0, le=4)
     due_at: Optional[datetime] = None
     clear_due_at: bool = False
+    type: Optional[str] = Field(None, max_length=80)
+    clear_type: bool = False
+    tags: Optional[List[str]] = None
+    target_due_at: Optional[datetime] = None
+    clear_target_due_at: bool = False
+    complexity: Optional[int] = Field(None, ge=0, le=5)
+    clear_complexity: bool = False
     # Image operations - use only one at a time
     add_image_r2_keys: Optional[List[str]] = Field(None, description="Append images to existing array")
     remove_image_r2_keys: Optional[List[str]] = Field(None, description="Remove specific images from array")
@@ -193,6 +232,26 @@ class AddCommentReactionRequest(BaseModel):
     emoji: str = Field(..., min_length=1, max_length=32, description="Emoji string")
 
 
+class UpsertRolePresetRequest(BaseModel):
+    capabilities: Dict[str, bool] = Field(default_factory=dict)
+
+
+class CreateBoardViewRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    sort: List[Dict[str, Any]] = Field(default_factory=list)
+    layout: str = Field(default="kanban", pattern="^(kanban|list)$")
+    is_shared: bool = True
+
+
+class UpdateBoardViewRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=120)
+    filters: Optional[Dict[str, Any]] = None
+    sort: Optional[List[Dict[str, Any]]] = None
+    layout: Optional[str] = Field(None, pattern="^(kanban|list)$")
+    is_shared: Optional[bool] = None
+
+
 # ============================================================================
 # Response Models
 # ============================================================================
@@ -209,6 +268,8 @@ class BoardResponse(BaseModel):
     color: Optional[str] = None
     position: int = 0
     next_issue_number: int = 1
+    default_role_capabilities: Optional[Dict[str, Any]] = None
+    enforce_column_limits: bool = True
     created_by: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -240,6 +301,8 @@ class StateResponse(BaseModel):
     color: Optional[str] = None
     position: int = 0
     is_done: bool = False
+    is_locked: bool = False
+    wip_limit: Optional[int] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -311,12 +374,18 @@ class IssueResponse(BaseModel):
     description: Optional[str] = None
     priority: int = 0
     due_at: Optional[str] = None
+    type: Optional[str] = None
+    tags: Optional[List[str]] = None
+    target_due_at: Optional[str] = None
+    complexity: Optional[int] = None
     image_r2_keys: Optional[List[str]] = None
     image_urls: Optional[List[str]] = None
     label_objects: Optional[List[LabelResponse]] = None
     assignees: Optional[List[AssigneeResponse]] = None
     position: int = 0
     created_by: Optional[str] = None
+    last_edited_by: Optional[str] = None
+    last_edited_at: Optional[str] = None
     completed_at: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -470,17 +539,21 @@ async def update_board_endpoint(
     board_id: str,
     request: UpdateBoardRequest,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Update a board."""
     try:
         board = await update_board(
             user_jwt=user_jwt,
+            user_id=user_id,
             board_id=board_id,
             name=request.name,
             description=request.description,
             icon=request.icon,
             color=request.color,
             key=request.key,
+            default_role_capabilities=request.default_role_capabilities,
+            enforce_column_limits=request.enforce_column_limits,
         )
         return board
     except ValueError as e:
@@ -493,12 +566,185 @@ async def update_board_endpoint(
 async def delete_board_endpoint(
     board_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Delete a board and all its states/issues."""
     try:
-        return await delete_board(user_jwt, board_id)
+        return await delete_board(user_jwt, user_id, board_id)
     except Exception as e:
         handle_api_exception(e, "Failed to delete board", logger)
+
+
+@router.get("/boards/{board_id}/role-presets")
+async def get_board_role_presets_endpoint(
+    board_id: str,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Get board role presets and the current user's resolved capabilities."""
+    try:
+        supabase = await get_authenticated_async_client(user_jwt)
+        from api.services.projects.access import resolve_board_capabilities
+
+        board = await get_board_by_id(user_jwt, board_id)
+        if not board:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Board not found")
+        presets = await supabase.table("project_board_role_presets")\
+            .select("*")\
+            .eq("board_id", board_id)\
+            .execute()
+        member_permissions = await supabase.table("project_board_member_permissions")\
+            .select("*")\
+            .eq("board_id", board_id)\
+            .execute()
+        capabilities = await resolve_board_capabilities(
+            supabase,
+            user_id=user_id,
+            board_id=board_id,
+        )
+        return {
+            "role_presets": presets.data or [],
+            "member_permissions": member_permissions.data or [],
+            "capabilities": capabilities,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to fetch board permissions", logger)
+
+
+@router.put("/boards/{board_id}/role-presets/{role}")
+async def upsert_board_role_preset_endpoint(
+    board_id: str,
+    role: str,
+    request: UpsertRolePresetRequest,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Create or update a board role preset."""
+    try:
+        if role not in {"owner", "admin", "member"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid workspace role")
+        supabase = await get_authenticated_async_client(user_jwt)
+        await require_board_capability(
+            supabase,
+            user_id=user_id,
+            board_id=board_id,
+            capability="manage_permissions",
+        )
+        board = await get_board_by_id(user_jwt, board_id)
+        if not board:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Board not found")
+        result = await supabase.table("project_board_role_presets")\
+            .upsert({
+                "workspace_id": board["workspace_id"],
+                "board_id": board_id,
+                "role": role,
+                "capabilities": request.capabilities,
+            }, on_conflict="board_id,role")\
+            .execute()
+        return {"role_preset": result.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to save board role preset", logger)
+
+
+@router.get("/boards/{board_id}/views")
+async def list_board_views_endpoint(
+    board_id: str,
+    user_jwt: str = Depends(get_current_user_jwt),
+):
+    """List saved views for a board."""
+    try:
+        supabase = await get_authenticated_async_client(user_jwt)
+        result = await supabase.table("project_board_views")\
+            .select("*")\
+            .eq("board_id", board_id)\
+            .order("created_at", desc=True)\
+            .execute()
+        return {"views": result.data or [], "count": len(result.data or [])}
+    except Exception as e:
+        handle_api_exception(e, "Failed to fetch board views", logger)
+
+
+@router.post("/boards/{board_id}/views", status_code=status.HTTP_201_CREATED)
+async def create_board_view_endpoint(
+    board_id: str,
+    request: CreateBoardViewRequest,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Create a saved board view."""
+    try:
+        supabase = await get_authenticated_async_client(user_jwt)
+        board = await get_board_by_id(user_jwt, board_id)
+        if not board:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Board not found")
+        result = await supabase.table("project_board_views")\
+            .insert({
+                "workspace_id": board["workspace_id"],
+                "board_id": board_id,
+                "name": request.name,
+                "filters": request.filters,
+                "sort": request.sort,
+                "layout": request.layout,
+                "is_shared": request.is_shared,
+                "created_by": user_id,
+            })\
+            .execute()
+        return {"view": result.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to create board view", logger)
+
+
+@router.patch("/views/{view_id}")
+async def update_board_view_endpoint(
+    view_id: str,
+    request: UpdateBoardViewRequest,
+    user_jwt: str = Depends(get_current_user_jwt),
+):
+    """Update a saved board view."""
+    try:
+        supabase = await get_authenticated_async_client(user_jwt)
+        updates = request.model_dump(exclude_unset=True)
+        if not updates:
+            current = await supabase.table("project_board_views")\
+                .select("*")\
+                .eq("id", view_id)\
+                .single()\
+                .execute()
+            return {"view": current.data}
+        result = await supabase.table("project_board_views")\
+            .update(updates)\
+            .eq("id", view_id)\
+            .execute()
+        if not result.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="View not found")
+        return {"view": result.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to update board view", logger)
+
+
+@router.delete("/views/{view_id}")
+async def delete_board_view_endpoint(
+    view_id: str,
+    user_jwt: str = Depends(get_current_user_jwt),
+):
+    """Delete a saved board view."""
+    try:
+        supabase = await get_authenticated_async_client(user_jwt)
+        await supabase.table("project_board_views")\
+            .delete()\
+            .eq("id", view_id)\
+            .execute()
+        return {"status": "deleted", "id": view_id}
+    except Exception as e:
+        handle_api_exception(e, "Failed to delete board view", logger)
 
 
 # ============================================================================
@@ -523,15 +769,19 @@ async def create_state_endpoint(
     board_id: str,
     request: CreateStateRequest,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Create a new state/column in a board."""
     try:
         state = await create_state(
             user_jwt=user_jwt,
+            user_id=user_id,
             board_id=board_id,
             name=request.name,
             color=request.color,
             is_done=request.is_done,
+            is_locked=request.is_locked,
+            wip_limit=request.wip_limit,
         )
         return state
     except Exception as e:
@@ -543,15 +793,20 @@ async def update_state_endpoint(
     state_id: str,
     request: UpdateStateRequest,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Update a state/column."""
     try:
         state = await update_state(
             user_jwt=user_jwt,
+            user_id=user_id,
             state_id=state_id,
             name=request.name,
             color=request.color,
             is_done=request.is_done,
+            is_locked=request.is_locked,
+            wip_limit=request.wip_limit,
+            clear_wip_limit=request.clear_wip_limit,
         )
         return state
     except ValueError as e:
@@ -565,11 +820,12 @@ async def reorder_states_endpoint(
     board_id: str,
     request: ReorderRequest,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Reorder states within a board."""
     try:
         items = [{"id": p.id, "position": p.position} for p in request.items]
-        result = await reorder_states(user_jwt, board_id, items)
+        result = await reorder_states(user_jwt, user_id, board_id, items)
         return result
     except Exception as e:
         handle_api_exception(e, "Failed to reorder states", logger)
@@ -579,10 +835,11 @@ async def reorder_states_endpoint(
 async def delete_state_endpoint(
     state_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Delete a state/column. Fails if it still has issues."""
     try:
-        return await delete_state(user_jwt, state_id)
+        return await delete_state(user_jwt, user_id, state_id)
     except Exception as e:
         handle_api_exception(e, "Failed to delete state", logger)
 
@@ -613,6 +870,13 @@ async def create_label_endpoint(
 ):
     """Create a new label on a board."""
     try:
+        supabase = await get_authenticated_async_client(user_jwt)
+        await require_board_capability(
+            supabase,
+            user_id=user_id,
+            board_id=board_id,
+            capability="manage_labels",
+        )
         label = await create_label(
             user_jwt=user_jwt,
             user_id=user_id,
@@ -636,9 +900,24 @@ async def update_label_endpoint(
     label_id: str,
     request: UpdateLabelRequest,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Update a label's name or color."""
     try:
+        supabase = await get_authenticated_async_client(user_jwt)
+        label_context = await supabase.table("project_labels")\
+            .select("board_id")\
+            .eq("id", label_id)\
+            .maybe_single()\
+            .execute()
+        if not label_context.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Label not found")
+        await require_board_capability(
+            supabase,
+            user_id=user_id,
+            board_id=label_context.data["board_id"],
+            capability="manage_labels",
+        )
         label = await update_label(
             user_jwt=user_jwt,
             label_id=label_id,
@@ -656,9 +935,24 @@ async def update_label_endpoint(
 async def delete_label_endpoint(
     label_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Delete a label. Removes it from all issues."""
     try:
+        supabase = await get_authenticated_async_client(user_jwt)
+        label_context = await supabase.table("project_labels")\
+            .select("board_id")\
+            .eq("id", label_id)\
+            .maybe_single()\
+            .execute()
+        if not label_context.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Label not found")
+        await require_board_capability(
+            supabase,
+            user_id=user_id,
+            board_id=label_context.data["board_id"],
+            capability="manage_labels",
+        )
         return await delete_label(user_jwt, label_id)
     except Exception as e:
         handle_api_exception(e, "Failed to delete label", logger)
@@ -669,9 +963,11 @@ async def add_label_to_issue_endpoint(
     issue_id: str,
     label_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Add a label to an issue."""
     try:
+        await _require_issue_route_capability(user_jwt, user_id, issue_id, "update_issue")
         result = await add_label_to_issue(user_jwt, issue_id, label_id)
         return result
     except Exception as e:
@@ -689,9 +985,11 @@ async def remove_label_from_issue_endpoint(
     issue_id: str,
     label_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Remove a label from an issue."""
     try:
+        await _require_issue_route_capability(user_jwt, user_id, issue_id, "update_issue")
         return await remove_label_from_issue(user_jwt, issue_id, label_id)
     except Exception as e:
         handle_api_exception(e, "Failed to remove label from issue", logger)
@@ -723,6 +1021,7 @@ async def add_assignee_endpoint(
 ):
     """Add an assignee to an issue (max 10)."""
     try:
+        await _require_issue_route_capability(user_jwt, user_id, issue_id, "assign_issue")
         assignee = await add_assignee(user_jwt, issue_id, request.user_id, current_user_id=user_id)
         return assignee
     except Exception as e:
@@ -745,9 +1044,11 @@ async def remove_assignee_endpoint(
     issue_id: str,
     user_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
+    current_user_id: str = Depends(get_current_user_id),
 ):
     """Remove an assignee from an issue."""
     try:
+        await _require_issue_route_capability(user_jwt, current_user_id, issue_id, "assign_issue")
         return await remove_assignee(user_jwt, issue_id, user_id)
     except Exception as e:
         handle_api_exception(e, "Failed to remove assignee", logger)
@@ -812,6 +1113,10 @@ async def create_issue_endpoint(
             description=request.description,
             priority=request.priority,
             due_at=request.due_at,
+            issue_type=request.type,
+            tags=request.tags,
+            target_due_at=request.target_due_at,
+            complexity=request.complexity,
             image_r2_keys=request.image_r2_keys,
             label_ids=request.label_ids,
             assignee_ids=request.assignee_ids,
@@ -828,17 +1133,26 @@ async def update_issue_endpoint(
     issue_id: str,
     request: UpdateIssueRequest,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Update an issue. Changing state_id triggers completion logic."""
     try:
         issue = await update_issue(
             user_jwt=user_jwt,
+            user_id=user_id,
             issue_id=issue_id,
             title=request.title,
             description=request.description,
             priority=request.priority,
             due_at=request.due_at,
             clear_due_at=request.clear_due_at,
+            issue_type=request.type,
+            clear_type=request.clear_type,
+            tags=request.tags,
+            target_due_at=request.target_due_at,
+            clear_target_due_at=request.clear_target_due_at,
+            complexity=request.complexity,
+            clear_complexity=request.clear_complexity,
             add_image_r2_keys=request.add_image_r2_keys,
             remove_image_r2_keys=request.remove_image_r2_keys,
             image_r2_keys=request.image_r2_keys,
@@ -881,11 +1195,12 @@ async def reorder_issues_endpoint(
     state_id: str,
     request: ReorderRequest,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Reorder issues within a state."""
     try:
         items = [{"id": p.id, "position": p.position} for p in request.items]
-        result = await reorder_issues(user_jwt, state_id, items)
+        result = await reorder_issues(user_jwt, user_id, state_id, items)
         return result
     except Exception as e:
         handle_api_exception(e, "Failed to reorder issues", logger)
@@ -895,10 +1210,11 @@ async def reorder_issues_endpoint(
 async def delete_issue_endpoint(
     issue_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Delete an issue."""
     try:
-        return await delete_issue(user_jwt, issue_id)
+        return await delete_issue(user_jwt, user_id, issue_id)
     except Exception as e:
         handle_api_exception(e, "Failed to delete issue", logger)
 
@@ -931,6 +1247,7 @@ async def create_comment_endpoint(
 ):
     """Create a new comment on an issue."""
     try:
+        await _require_issue_route_capability(user_jwt, user_id, issue_id, "comment_issue")
         blocks = [b.model_dump() for b in request.blocks]
         comment = await create_comment(user_id, user_jwt, issue_id, blocks)
         return comment

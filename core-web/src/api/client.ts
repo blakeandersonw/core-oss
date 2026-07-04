@@ -223,6 +223,54 @@ export interface WorkspaceInvitation {
   recipient_user_exists?: boolean;
 }
 
+export interface WorkspaceClientContact {
+  id: string;
+  workspace_id: string;
+  kind: 'email' | 'domain';
+  value: string;
+  label?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WorkspaceConnector {
+  id: string;
+  workspace_id: string;
+  provider: string;
+  display_name?: string | null;
+  status: 'connected' | 'disconnected' | 'error' | 'pending';
+  scopes: string[];
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WorkspaceApiKey {
+  id: string;
+  workspace_id: string;
+  name: string;
+  key_prefix: string;
+  key?: string;
+  scopes: string[];
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+  expires_at?: string | null;
+  created_at?: string;
+}
+
+export interface WorkspaceWebhook {
+  id: string;
+  workspace_id: string;
+  name: string;
+  url: string;
+  events: string[];
+  secret_prefix?: string | null;
+  secret?: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface WorkspaceInvitationActionResult {
   invitation: WorkspaceInvitation;
   already_processed: boolean;
@@ -648,6 +696,108 @@ export async function reorderWorkspaceApps(
     method: 'POST',
     body: JSON.stringify({ app_positions: appPositions }),
   });
+}
+
+// ============================================================================
+// Workspace Client Access & Integrations API Functions
+// ============================================================================
+
+export async function getWorkspaceClientContacts(workspaceId: string): Promise<WorkspaceClientContact[]> {
+  const response = await api<{ contacts: WorkspaceClientContact[]; count: number }>(
+    `/workspaces/${workspaceId}/client-contacts`
+  );
+  return response.contacts;
+}
+
+export async function createWorkspaceClientContact(
+  workspaceId: string,
+  data: { kind: 'email' | 'domain'; value: string; label?: string }
+): Promise<WorkspaceClientContact> {
+  const response = await api<{ contact: WorkspaceClientContact }>(
+    `/workspaces/${workspaceId}/client-contacts`,
+    { method: 'POST', body: JSON.stringify(data) }
+  );
+  return response.contact;
+}
+
+export async function deleteWorkspaceClientContact(workspaceId: string, contactId: string): Promise<void> {
+  await api(`/workspaces/${workspaceId}/client-contacts/${contactId}`, { method: 'DELETE' });
+}
+
+export async function getWorkspaceConnectors(workspaceId: string): Promise<WorkspaceConnector[]> {
+  const response = await api<{ connectors: WorkspaceConnector[]; count: number }>(
+    `/workspaces/${workspaceId}/connectors`
+  );
+  return response.connectors;
+}
+
+export async function saveWorkspaceConnector(
+  workspaceId: string,
+  data: {
+    provider: string;
+    display_name?: string;
+    status?: WorkspaceConnector['status'];
+    scopes?: string[];
+    metadata?: Record<string, unknown>;
+  }
+): Promise<WorkspaceConnector> {
+  const response = await api<{ connector: WorkspaceConnector }>(
+    `/workspaces/${workspaceId}/connectors`,
+    { method: 'POST', body: JSON.stringify(data) }
+  );
+  return response.connector;
+}
+
+export async function deleteWorkspaceConnector(workspaceId: string, connectorId: string): Promise<void> {
+  await api(`/workspaces/${workspaceId}/connectors/${connectorId}`, { method: 'DELETE' });
+}
+
+export async function getWorkspaceApiKeys(workspaceId: string): Promise<WorkspaceApiKey[]> {
+  const response = await api<{ api_keys: WorkspaceApiKey[]; count: number }>(
+    `/workspaces/${workspaceId}/api-keys`
+  );
+  return response.api_keys;
+}
+
+export async function createWorkspaceApiKey(
+  workspaceId: string,
+  data: { name: string; scopes?: string[]; expires_at?: string | null }
+): Promise<WorkspaceApiKey> {
+  const response = await api<{ api_key: WorkspaceApiKey }>(
+    `/workspaces/${workspaceId}/api-keys`,
+    { method: 'POST', body: JSON.stringify(data) }
+  );
+  return response.api_key;
+}
+
+export async function revokeWorkspaceApiKey(workspaceId: string, apiKeyId: string): Promise<void> {
+  await api(`/workspaces/${workspaceId}/api-keys/${apiKeyId}/revoke`, { method: 'POST' });
+}
+
+export async function getWorkspaceWebhooks(workspaceId: string): Promise<WorkspaceWebhook[]> {
+  const response = await api<{ webhooks: WorkspaceWebhook[]; count: number }>(
+    `/workspaces/${workspaceId}/webhooks`
+  );
+  return response.webhooks;
+}
+
+export async function createWorkspaceWebhook(
+  workspaceId: string,
+  data: { name: string; url: string; events: string[] }
+): Promise<WorkspaceWebhook> {
+  const response = await api<{ webhook: WorkspaceWebhook }>(
+    `/workspaces/${workspaceId}/webhooks`,
+    { method: 'POST', body: JSON.stringify(data) }
+  );
+  return response.webhook;
+}
+
+export async function deleteWorkspaceWebhook(workspaceId: string, webhookId: string): Promise<void> {
+  await api(`/workspaces/${workspaceId}/webhooks/${webhookId}`, { method: 'DELETE' });
+}
+
+export async function getWorkspaceMcpManifest(workspaceId: string): Promise<Record<string, unknown>> {
+  return api(`/workspaces/${workspaceId}/mcp/manifest`);
 }
 
 // ============================================================================
@@ -1470,6 +1620,7 @@ export async function syncCalendar(): Promise<{ synced: number }> {
 export interface Conversation {
   id: string;
   title: string;
+  workspace_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1520,14 +1671,20 @@ export interface Source {
 }
 
 // API functions
-export async function getConversations(): Promise<Conversation[]> {
-  return api<Conversation[]>('/chat/conversations');
+export async function getConversations(workspaceId?: string): Promise<Conversation[]> {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  const qs = params.toString();
+  return api<Conversation[]>(`/chat/conversations${qs ? `?${qs}` : ''}`);
 }
 
-export async function createConversation(title?: string): Promise<Conversation> {
+export async function createConversation(title?: string, workspaceId?: string | null): Promise<Conversation> {
   const result = await api<Conversation>('/chat/conversations', {
     method: 'POST',
-    body: JSON.stringify({ title: title || 'New Conversation' }),
+    body: JSON.stringify({
+      title: title || 'New Conversation',
+      ...(workspaceId ? { workspace_id: workspaceId } : {}),
+    }),
   });
   trackEvent('chat_conversation_created');
   return result;
@@ -2430,6 +2587,8 @@ export interface ProjectBoard {
   color?: string;
   position: number;
   next_issue_number: number;
+  default_role_capabilities?: Record<string, Record<string, boolean>>;
+  enforce_column_limits?: boolean;
   created_by?: string;
   created_at?: string;
   updated_at?: string;
@@ -2444,6 +2603,8 @@ export interface ProjectState {
   color?: string;
   position: number;
   is_done: boolean;
+  is_locked?: boolean;
+  wip_limit?: number | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -2480,12 +2641,18 @@ export interface ProjectIssue {
   description?: string;
   priority: number; // 0=none, 1=urgent, 2=high, 3=medium, 4=low
   due_at?: string;
+  type?: string | null;
+  tags?: string[];
+  target_due_at?: string | null;
+  complexity?: number | null;
   image_r2_keys?: string[]; // R2 keys stored in DB
   image_urls?: string[]; // Generated signed proxy URLs
   label_objects?: ProjectLabel[];
   assignees?: ProjectIssueAssignee[];
   position: number;
   created_by?: string;
+  last_edited_by?: string | null;
+  last_edited_at?: string | null;
   completed_at?: string;
   created_at?: string;
   updated_at?: string;
@@ -2494,6 +2661,28 @@ export interface ProjectIssue {
 export interface ItemPosition {
   id: string;
   position: number;
+}
+
+export interface ProjectBoardRolePreset {
+  id: string;
+  workspace_id: string;
+  board_id: string;
+  role: 'owner' | 'admin' | 'member';
+  capabilities: Record<string, boolean>;
+}
+
+export interface ProjectBoardView {
+  id: string;
+  workspace_id: string;
+  board_id: string;
+  name: string;
+  filters: Record<string, unknown>;
+  sort: Array<Record<string, unknown>>;
+  layout: 'kanban' | 'list';
+  is_shared: boolean;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 // --- Issue Comments ---
@@ -2558,6 +2747,8 @@ export async function updateProjectBoard(boardId: string, updates: {
   icon?: string;
   color?: string;
   key?: string;
+  default_role_capabilities?: Record<string, Record<string, boolean>>;
+  enforce_column_limits?: boolean;
 }): Promise<ProjectBoard> {
   return api(`/projects/boards/${boardId}`, {
     method: 'PATCH',
@@ -2579,6 +2770,8 @@ export async function createProjectState(boardId: string, data: {
   name: string;
   color?: string;
   is_done?: boolean;
+  is_locked?: boolean;
+  wip_limit?: number | null;
 }): Promise<ProjectState> {
   return api(`/projects/boards/${boardId}/states`, {
     method: 'POST',
@@ -2590,6 +2783,9 @@ export async function updateProjectState(stateId: string, updates: {
   name?: string;
   color?: string;
   is_done?: boolean;
+  is_locked?: boolean;
+  wip_limit?: number | null;
+  clear_wip_limit?: boolean;
 }): Promise<ProjectState> {
   const response = await api<ProjectState | { state: ProjectState }>(`/projects/states/${stateId}`, {
     method: 'PATCH',
@@ -2636,6 +2832,10 @@ export async function createProjectIssue(data: {
   description?: string;
   priority?: number;
   due_at?: string;
+  type?: string;
+  tags?: string[];
+  target_due_at?: string;
+  complexity?: number;
   label_ids?: string[];
   assignee_ids?: string[];
 }): Promise<ProjectIssue> {
@@ -2653,6 +2853,13 @@ export async function updateProjectIssue(issueId: string, updates: {
   priority?: number;
   due_at?: string;
   clear_due_at?: boolean;
+  type?: string;
+  clear_type?: boolean;
+  tags?: string[];
+  target_due_at?: string;
+  clear_target_due_at?: boolean;
+  complexity?: number;
+  clear_complexity?: boolean;
   // Image operations (mutually exclusive)
   add_image_r2_keys?: string[]; // Append images
   remove_image_r2_keys?: string[]; // Remove specific images
@@ -2687,6 +2894,65 @@ export async function reorderProjectIssues(stateId: string, items: ItemPosition[
 
 export async function deleteProjectIssue(issueId: string): Promise<{ status: string }> {
   return api(`/projects/issues/${issueId}`, { method: 'DELETE' });
+}
+
+export async function getProjectBoardRolePresets(boardId: string): Promise<{
+  role_presets: ProjectBoardRolePreset[];
+  member_permissions: Array<Record<string, unknown>>;
+  capabilities: Record<string, boolean>;
+}> {
+  return api(`/projects/boards/${boardId}/role-presets`);
+}
+
+export async function saveProjectBoardRolePreset(
+  boardId: string,
+  role: 'owner' | 'admin' | 'member',
+  capabilities: Record<string, boolean>
+): Promise<ProjectBoardRolePreset> {
+  const response = await api<{ role_preset: ProjectBoardRolePreset }>(
+    `/projects/boards/${boardId}/role-presets/${role}`,
+    { method: 'PUT', body: JSON.stringify({ capabilities }) }
+  );
+  return response.role_preset;
+}
+
+export async function getProjectBoardViews(boardId: string): Promise<ProjectBoardView[]> {
+  const response = await api<{ views: ProjectBoardView[]; count: number }>(
+    `/projects/boards/${boardId}/views`
+  );
+  return response.views;
+}
+
+export async function createProjectBoardView(
+  boardId: string,
+  data: {
+    name: string;
+    filters: Record<string, unknown>;
+    sort?: Array<Record<string, unknown>>;
+    layout?: 'kanban' | 'list';
+    is_shared?: boolean;
+  }
+): Promise<ProjectBoardView> {
+  const response = await api<{ view: ProjectBoardView }>(
+    `/projects/boards/${boardId}/views`,
+    { method: 'POST', body: JSON.stringify(data) }
+  );
+  return response.view;
+}
+
+export async function updateProjectBoardView(
+  viewId: string,
+  updates: Partial<Pick<ProjectBoardView, 'name' | 'filters' | 'sort' | 'layout' | 'is_shared'>>
+): Promise<ProjectBoardView> {
+  const response = await api<{ view: ProjectBoardView }>(
+    `/projects/views/${viewId}`,
+    { method: 'PATCH', body: JSON.stringify(updates) }
+  );
+  return response.view;
+}
+
+export async function deleteProjectBoardView(viewId: string): Promise<void> {
+  await api(`/projects/views/${viewId}`, { method: 'DELETE' });
 }
 
 // --- Labels ---
