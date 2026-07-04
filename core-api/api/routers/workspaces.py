@@ -1,6 +1,7 @@
 """
 Workspaces router - HTTP endpoints for workspace management
 """
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, Dict, Any, List
@@ -28,10 +29,15 @@ from api.services.workspaces.apps import get_app_members
 from api.services.users import search_users_by_email
 from api.dependencies import get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
+from lib.image_proxy import generate_image_url
+from lib.r2_client import get_r2_client
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+WORKSPACE_ICON_MIME_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+MAX_WORKSPACE_ICON_SIZE = 5 * 1024 * 1024
 
 
 # ============================================================================
@@ -58,6 +64,26 @@ class UpdateWorkspaceRequest(BaseModel):
     emoji: Optional[str] = Field(None, max_length=10, description="Emoji icon for workspace")
     icon_r2_key: Optional[str] = Field(None, description="R2 key for workspace icon (from file upload)")
     clear_icon: bool = False
+
+
+class WorkspaceIconUploadInitiateRequest(BaseModel):
+    """Request to initiate a workspace icon/logo upload"""
+    filename: str = Field(..., min_length=1, max_length=255)
+    content_type: str
+    file_size: int = Field(..., gt=0)
+
+
+class WorkspaceIconUploadInitiateResponse(BaseModel):
+    """Response with a presigned upload URL for a workspace icon/logo"""
+    upload_url: str
+    r2_key: str
+    icon_url: Optional[str] = None
+    expires_at: str
+
+
+class WorkspaceIconUploadConfirmRequest(BaseModel):
+    """Request to confirm a workspace icon/logo upload"""
+    r2_key: str
 
 
 class AddMemberRequest(BaseModel):
@@ -412,6 +438,106 @@ async def create_workspace_endpoint(
         )
     except Exception as e:
         handle_api_exception(e, "Failed to create workspace", logger)
+
+
+@router.post("/{workspace_id}/icon/initiate", response_model=WorkspaceIconUploadInitiateResponse)
+async def initiate_workspace_icon_upload(
+    workspace_id: str,
+    request: WorkspaceIconUploadInitiateRequest,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Initiate a workspace icon/logo upload.
+
+    Only workspace owners/admins can update workspace branding.
+    """
+    try:
+        role = await get_user_workspace_role(workspace_id, user_id, user_jwt)
+        if role not in {"owner", "admin"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only workspace admins can upload a workspace logo",
+            )
+
+        if request.content_type not in WORKSPACE_ICON_MIME_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid image type. Allowed: {', '.join(sorted(WORKSPACE_ICON_MIME_TYPES))}",
+            )
+
+        if request.file_size > MAX_WORKSPACE_ICON_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File too large. Maximum size: {MAX_WORKSPACE_ICON_SIZE // (1024 * 1024)}MB",
+            )
+
+        r2 = get_r2_client()
+        r2_key = r2.generate_key_for_context(
+            user_id=workspace_id,
+            filename=request.filename,
+            context="workspace-icons",
+        )
+        presigned = r2.generate_presigned_put_url(
+            r2_key=r2_key,
+            content_type=request.content_type,
+            expiration=300,
+        )
+
+        return WorkspaceIconUploadInitiateResponse(
+            upload_url=presigned["url"],
+            r2_key=r2_key,
+            icon_url=generate_image_url(r2_key, variant="thumb"),
+            expires_at=presigned.get("expires_at") or (datetime.utcnow() + timedelta(seconds=300)).isoformat() + "Z",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to initiate workspace icon upload", logger)
+
+
+@router.post("/{workspace_id}/icon/confirm", response_model=WorkspaceSingleResponse)
+async def confirm_workspace_icon_upload(
+    workspace_id: str,
+    request: WorkspaceIconUploadConfirmRequest,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Confirm a workspace icon/logo upload and persist it as workspace branding.
+    """
+    try:
+        role = await get_user_workspace_role(workspace_id, user_id, user_jwt)
+        if role not in {"owner", "admin"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only workspace admins can update a workspace logo",
+            )
+
+        expected_prefix = f"workspace-icons/{workspace_id}/"
+        if not request.r2_key.startswith(expected_prefix):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid workspace icon key",
+            )
+
+        r2 = get_r2_client()
+        if not r2.file_exists(request.r2_key):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File not found in storage. Upload may have failed.",
+            )
+
+        workspace = await update_workspace(
+            workspace_id=workspace_id,
+            user_jwt=user_jwt,
+            icon_r2_key=request.r2_key,
+        )
+        return {"workspace": workspace}
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to confirm workspace icon upload", logger)
 
 
 @router.patch("/{workspace_id}", response_model=WorkspaceSingleResponse)

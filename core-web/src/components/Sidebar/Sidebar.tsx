@@ -42,8 +42,7 @@ import {
   revokeWorkspaceInvitation,
   removeWorkspaceMember,
   updateWorkspaceMemberRole,
-  getPresignedUploadUrl,
-  confirmFileUpload,
+  uploadWorkspaceIconAsset,
   reorderWorkspaceApps,
   getWorkspaceClientContacts,
   createWorkspaceClientContact,
@@ -588,30 +587,14 @@ export default function Sidebar() {
 
     setIsUploadingIcon(true);
     try {
-      const uploadInfo = await getPresignedUploadUrl({
-        workspaceId: selectedWorkspaceId || undefined,
-        filename: file.name,
-        contentType: mimeType,
-        fileSize: file.size,
-        createDocument: false,
-      });
-
-      const uploadResponse = await fetch(uploadInfo.upload_url, {
-        method: "PUT",
-        headers: uploadInfo.headers,
-        body: file,
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error("Upload failed");
+      if (!selectedWorkspaceId) {
+        throw new Error("Select a workspace before uploading a logo");
       }
 
-      const confirmResult = await confirmFileUpload(uploadInfo.file_id, {
-        createDocument: false,
-      });
+      const uploadInfo = await uploadWorkspaceIconAsset(selectedWorkspaceId, file, mimeType);
 
-      setFormIconR2Key(confirmResult.file.r2_key || uploadInfo.r2_key);
-      setFormIconUrl(confirmResult.file.public_url || uploadInfo.public_url);
+      setFormIconR2Key(uploadInfo.r2_key);
+      setFormIconUrl(uploadInfo.icon_url || URL.createObjectURL(file));
       setFormEmoji("");
     } catch (err) {
       console.error("Failed to upload icon:", err);
@@ -1925,24 +1908,27 @@ export default function Sidebar() {
                 <p className="text-xs text-text-secondary">No connectors configured</p>
               ) : (
                 <div className="flex flex-col gap-2">
-                  {connectors.map((connector) => (
-                    <div key={connector.id} className="flex items-center justify-between px-3 py-3 border border-border-light rounded-lg">
-                      <div>
-                        <p className="text-sm font-medium">{connector.display_name || connector.provider}</p>
-                        <p className="text-[11px] text-text-secondary capitalize">
-                          {connector.status} {connector.scopes.length ? `• ${connector.scopes.join(", ")}` : ""}
-                        </p>
+                  {connectors.map((connector) => {
+                    const connectorScopes = Array.isArray(connector.scopes) ? connector.scopes : [];
+                    return (
+                      <div key={connector.id} className="flex items-center justify-between px-3 py-3 border border-border-light rounded-lg">
+                        <div>
+                          <p className="text-sm font-medium">{connector.display_name || connector.provider}</p>
+                          <p className="text-[11px] text-text-secondary capitalize">
+                            {connector.status} {connectorScopes.length ? `• ${connectorScopes.join(", ")}` : ""}
+                          </p>
+                        </div>
+                        {canManageWorkspaceMembers && (
+                          <button
+                            onClick={() => handleDeleteConnector(connector.id)}
+                            className="text-xs text-red-500 hover:bg-red-50 px-2 py-1 rounded"
+                          >
+                            Disconnect
+                          </button>
+                        )}
                       </div>
-                      {canManageWorkspaceMembers && (
-                        <button
-                          onClick={() => handleDeleteConnector(connector.id)}
-                          className="text-xs text-red-500 hover:bg-red-50 px-2 py-1 rounded"
-                        >
-                          Disconnect
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               <div className="pt-4 mt-auto border-t border-border-light" />
@@ -1988,21 +1974,24 @@ export default function Sidebar() {
                 <div className="flex flex-col gap-1">
                   {apiKeys.length === 0 ? (
                     <p className="text-xs text-text-secondary">No API keys</p>
-                  ) : apiKeys.map((apiKey) => (
-                    <div key={apiKey.id} className="flex items-center justify-between px-3 py-2 bg-bg-gray rounded-lg">
-                      <div>
-                        <p className="text-sm">{apiKey.name}</p>
-                        <p className="text-[10px] text-text-secondary">
-                          {apiKey.key_prefix}... {apiKey.revoked_at ? "• revoked" : `• ${apiKey.scopes.join(", ")}`}
-                        </p>
+                  ) : apiKeys.map((apiKey) => {
+                    const apiKeyScopes = Array.isArray(apiKey.scopes) ? apiKey.scopes : [];
+                    return (
+                      <div key={apiKey.id} className="flex items-center justify-between px-3 py-2 bg-bg-gray rounded-lg">
+                        <div>
+                          <p className="text-sm">{apiKey.name}</p>
+                          <p className="text-[10px] text-text-secondary">
+                            {apiKey.key_prefix}... {apiKey.revoked_at ? "• revoked" : `• ${apiKeyScopes.join(", ")}`}
+                          </p>
+                        </div>
+                        {!apiKey.revoked_at && canManageWorkspaceMembers && (
+                          <button onClick={() => handleRevokeApiKey(apiKey.id)} className="text-xs text-red-500 px-2 py-1 rounded hover:bg-red-50">
+                            Revoke
+                          </button>
+                        )}
                       </div>
-                      {!apiKey.revoked_at && canManageWorkspaceMembers && (
-                        <button onClick={() => handleRevokeApiKey(apiKey.id)} className="text-xs text-red-500 px-2 py-1 rounded hover:bg-red-50">
-                          Revoke
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
               <div>
@@ -2035,19 +2024,24 @@ export default function Sidebar() {
                 <div className="flex flex-col gap-1">
                   {webhooks.length === 0 ? (
                     <p className="text-xs text-text-secondary">No webhooks</p>
-                  ) : webhooks.map((webhook) => (
-                    <div key={webhook.id} className="flex items-center justify-between px-3 py-2 bg-bg-gray rounded-lg">
-                      <div className="min-w-0">
-                        <p className="text-sm truncate">{webhook.name}</p>
-                        <p className="text-[10px] text-text-secondary truncate">{webhook.url}</p>
+                  ) : webhooks.map((webhook) => {
+                    const webhookEvents = Array.isArray(webhook.events) ? webhook.events : [];
+                    return (
+                      <div key={webhook.id} className="flex items-center justify-between px-3 py-2 bg-bg-gray rounded-lg">
+                        <div className="min-w-0">
+                          <p className="text-sm truncate">{webhook.name}</p>
+                          <p className="text-[10px] text-text-secondary truncate">
+                            {webhook.url}{webhookEvents.length ? ` • ${webhookEvents.join(", ")}` : ""}
+                          </p>
+                        </div>
+                        {canManageWorkspaceMembers && (
+                          <button onClick={() => handleDeleteWebhook(webhook.id)} className="text-xs text-red-500 px-2 py-1 rounded hover:bg-red-50">
+                            Remove
+                          </button>
+                        )}
                       </div>
-                      {canManageWorkspaceMembers && (
-                        <button onClick={() => handleDeleteWebhook(webhook.id)} className="text-xs text-red-500 px-2 py-1 rounded hover:bg-red-50">
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -2070,14 +2064,16 @@ export default function Sidebar() {
                   className="hidden"
                 />
                 <button
+                  type="button"
                   onClick={() => iconInputRef.current?.click()}
-                  disabled={isUploadingIcon}
-                  className="group/icon relative w-[38px] h-[38px] flex items-center justify-center rounded-lg bg-bg-gray overflow-hidden shrink-0 cursor-pointer"
+                  disabled={isUploadingIcon || !canManageWorkspaceMembers}
+                  aria-label="Upload workspace logo"
+                  className="group/icon relative w-[38px] h-[38px] flex items-center justify-center rounded-lg bg-bg-gray overflow-hidden shrink-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {formIconUrl ? (
                     <img
                       src={formIconUrl}
-                      alt="Icon"
+                      alt=""
                       className="w-full h-full object-cover"
                     />
                   ) : (
@@ -2095,8 +2091,26 @@ export default function Sidebar() {
                   onChange={(e) => setFormName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleEditWorkspace()}
                   placeholder="Workspace name"
+                  disabled={!canManageWorkspaceMembers}
                   className="flex-1 bg-white border border-border-gray rounded-lg px-3 py-2.5 text-xs outline-none focus:border-text-tertiary"
                 />
+                </div>
+                <div className="mt-2 flex items-center gap-3 pl-[50px]">
+                  <p className="text-[11px] text-text-tertiary">
+                    Square PNG, JPG, GIF, or WebP up to 5MB.
+                  </p>
+                  {(formIconUrl || formIconR2Key) && canManageWorkspaceMembers && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormIconUrl(null);
+                        setFormIconR2Key(null);
+                      }}
+                      className="text-[11px] text-red-500 hover:text-red-600"
+                    >
+                      Remove logo
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2166,8 +2180,9 @@ export default function Sidebar() {
                   Cancel
                 </button>
                 <button
+                  type="button"
                   onClick={handleEditWorkspace}
-                  disabled={!formName.trim()}
+                  disabled={!formName.trim() || !canManageWorkspaceMembers}
                   className="px-4 py-2 text-sm bg-brand-primary text-white rounded-lg disabled:opacity-50"
                 >
                   Save

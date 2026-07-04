@@ -271,6 +271,32 @@ export interface WorkspaceWebhook {
   updated_at?: string;
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function normalizeWorkspaceConnector(connector: WorkspaceConnector): WorkspaceConnector {
+  return {
+    ...connector,
+    scopes: normalizeStringArray(connector.scopes),
+    metadata: connector.metadata ?? {},
+  };
+}
+
+function normalizeWorkspaceApiKey(apiKey: WorkspaceApiKey): WorkspaceApiKey {
+  return {
+    ...apiKey,
+    scopes: normalizeStringArray(apiKey.scopes),
+  };
+}
+
+function normalizeWorkspaceWebhook(webhook: WorkspaceWebhook): WorkspaceWebhook {
+  return {
+    ...webhook,
+    events: normalizeStringArray(webhook.events),
+  };
+}
+
 export interface WorkspaceInvitationActionResult {
   invitation: WorkspaceInvitation;
   already_processed: boolean;
@@ -336,6 +362,72 @@ export async function updateWorkspace(
     body: JSON.stringify(updates),
   });
   return response.workspace;
+}
+
+interface WorkspaceIconUploadInitiateResponse {
+  upload_url: string;
+  r2_key: string;
+  icon_url?: string | null;
+  expires_at: string;
+}
+
+export async function initiateWorkspaceIconUpload(
+  workspaceId: string,
+  filename: string,
+  contentType: string,
+  fileSize: number
+): Promise<WorkspaceIconUploadInitiateResponse> {
+  return api(`/workspaces/${workspaceId}/icon/initiate`, {
+    method: 'POST',
+    body: JSON.stringify({
+      filename,
+      content_type: contentType,
+      file_size: fileSize,
+    }),
+  });
+}
+
+export async function confirmWorkspaceIconUpload(
+  workspaceId: string,
+  r2Key: string
+): Promise<Workspace> {
+  const response = await api<{ workspace: Workspace }>(`/workspaces/${workspaceId}/icon/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({ r2_key: r2Key }),
+  });
+  return response.workspace;
+}
+
+export async function uploadWorkspaceIconAsset(
+  workspaceId: string,
+  file: File,
+  contentType: string = file.type
+): Promise<{ r2_key: string; icon_url?: string | null }> {
+  const { upload_url, r2_key, icon_url } = await initiateWorkspaceIconUpload(
+    workspaceId,
+    file.name,
+    contentType,
+    file.size
+  );
+
+  const uploadResponse = await fetch(upload_url, {
+    method: 'PUT',
+    body: file,
+    headers: {
+      'Content-Type': contentType,
+    },
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Failed to upload workspace logo to storage: ${uploadResponse.status}`);
+  }
+
+  return { r2_key, icon_url };
+}
+
+export async function uploadWorkspaceIcon(workspaceId: string, file: File): Promise<Workspace> {
+  const { r2_key } = await uploadWorkspaceIconAsset(workspaceId, file);
+  return confirmWorkspaceIconUpload(workspaceId, r2_key);
 }
 
 export async function deleteWorkspace(id: string): Promise<void> {
@@ -728,7 +820,7 @@ export async function getWorkspaceConnectors(workspaceId: string): Promise<Works
   const response = await api<{ connectors: WorkspaceConnector[]; count: number }>(
     `/workspaces/${workspaceId}/connectors`
   );
-  return response.connectors;
+  return (response.connectors ?? []).map(normalizeWorkspaceConnector);
 }
 
 export async function saveWorkspaceConnector(
@@ -745,7 +837,7 @@ export async function saveWorkspaceConnector(
     `/workspaces/${workspaceId}/connectors`,
     { method: 'POST', body: JSON.stringify(data) }
   );
-  return response.connector;
+  return normalizeWorkspaceConnector(response.connector);
 }
 
 export async function deleteWorkspaceConnector(workspaceId: string, connectorId: string): Promise<void> {
@@ -756,7 +848,7 @@ export async function getWorkspaceApiKeys(workspaceId: string): Promise<Workspac
   const response = await api<{ api_keys: WorkspaceApiKey[]; count: number }>(
     `/workspaces/${workspaceId}/api-keys`
   );
-  return response.api_keys;
+  return (response.api_keys ?? []).map(normalizeWorkspaceApiKey);
 }
 
 export async function createWorkspaceApiKey(
@@ -767,7 +859,7 @@ export async function createWorkspaceApiKey(
     `/workspaces/${workspaceId}/api-keys`,
     { method: 'POST', body: JSON.stringify(data) }
   );
-  return response.api_key;
+  return normalizeWorkspaceApiKey(response.api_key);
 }
 
 export async function revokeWorkspaceApiKey(workspaceId: string, apiKeyId: string): Promise<void> {
@@ -778,7 +870,7 @@ export async function getWorkspaceWebhooks(workspaceId: string): Promise<Workspa
   const response = await api<{ webhooks: WorkspaceWebhook[]; count: number }>(
     `/workspaces/${workspaceId}/webhooks`
   );
-  return response.webhooks;
+  return (response.webhooks ?? []).map(normalizeWorkspaceWebhook);
 }
 
 export async function createWorkspaceWebhook(
@@ -789,7 +881,7 @@ export async function createWorkspaceWebhook(
     `/workspaces/${workspaceId}/webhooks`,
     { method: 'POST', body: JSON.stringify(data) }
   );
-  return response.webhook;
+  return normalizeWorkspaceWebhook(response.webhook);
 }
 
 export async function deleteWorkspaceWebhook(workspaceId: string, webhookId: string): Promise<void> {
