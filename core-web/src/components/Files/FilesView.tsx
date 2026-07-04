@@ -50,6 +50,7 @@ import { useAuthStore } from "../../stores/authStore";
 import { usePermissionStore } from "../../stores/permissionStore";
 import { SIDEBAR } from "../../lib/sidebar";
 import { API_BASE } from "../../lib/apiBase";
+import { getDocumentDisplayTitle, getSafeUploadFilename } from "../../utils/files";
 
 type SaveStatus = "saved" | "saving" | "unsaved" | "error";
 
@@ -281,12 +282,37 @@ function formatDateRelative(dateString?: string): string {
 
 const SAVE_DEBOUNCE_MS = 2000;
 
+function FolderFetchErrorRow({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="ml-9 mr-2 my-1 rounded-md bg-red-50 px-2.5 py-2 text-[12px] text-red-600">
+      <div className="leading-snug">{message}</div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRetry();
+        }}
+        className="mt-1 font-medium text-red-700 hover:text-red-900"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
 // Recursive component to render nested folder contents
 function NestedFolderContents({
   items,
   depth,
   expandedFolders,
   documentsByFolder,
+  folderErrors,
   selectedNoteId,
   onFolderToggle,
   onFolderOpen,
@@ -298,11 +324,13 @@ function NestedFolderContents({
   setEditingItemName,
   onRenameKeyDown,
   onRenameSubmit,
+  onRetryFolder,
 }: {
   items: Document[];
   depth: number;
   expandedFolders: Set<string>;
   documentsByFolder: Record<string, Document[]>;
+  folderErrors: Record<string, string>;
   selectedNoteId: string | null;
   onFolderToggle: (folder: Document) => void;
   onFolderOpen: (folder: Document) => void;
@@ -314,6 +342,7 @@ function NestedFolderContents({
   setEditingItemName: (name: string) => void;
   onRenameKeyDown: (e: React.KeyboardEvent, docId: string) => void;
   onRenameSubmit: (docId: string) => void;
+  onRetryFolder: (folderId: string) => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const menuRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -324,6 +353,7 @@ function NestedFolderContents({
         const isFolder = item.is_folder || item.type === "folder";
         const isNestedExpanded = expandedFolders.has(item.id);
         const nestedContents = documentsByFolder[item.id] || [];
+        const folderError = folderErrors[item.id];
 
         if (isFolder) {
           return (
@@ -354,7 +384,7 @@ function NestedFolderContents({
                       />
                     ) : (
                       <span className="flex-1 text-left truncate">
-                        {item.title || "Untitled"}
+                        {getDocumentDisplayTitle(item)}
                       </span>
                     )}
                     {/* Three-dot menu + count overlay in same position */}
@@ -409,7 +439,7 @@ function NestedFolderContents({
                     )}
                   </div>
                   <AnimatePresence>
-                    {isNestedExpanded && nestedContents.length > 0 && (
+                    {isNestedExpanded && (nestedContents.length > 0 || folderError) && (
                       <motion.div
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: "auto", opacity: 1 }}
@@ -417,23 +447,33 @@ function NestedFolderContents({
                         transition={{ duration: 0.15 }}
                         className="overflow-hidden"
                       >
-                        <NestedFolderContents
-                          items={nestedContents}
-                          depth={depth + 1}
-                          expandedFolders={expandedFolders}
-                          documentsByFolder={documentsByFolder}
-                          selectedNoteId={selectedNoteId}
-                          onFolderToggle={onFolderToggle}
-                          onFolderOpen={onFolderOpen}
-                          onItemClick={onItemClick}
-                          onRename={onRename}
-                          onDelete={onDelete}
-                          editingItemId={editingItemId}
-                          editingItemName={editingItemName}
-                          setEditingItemName={setEditingItemName}
-                          onRenameKeyDown={onRenameKeyDown}
-                          onRenameSubmit={onRenameSubmit}
-                        />
+                        {folderError && (
+                          <FolderFetchErrorRow
+                            message={folderError}
+                            onRetry={() => onRetryFolder(item.id)}
+                          />
+                        )}
+                        {nestedContents.length > 0 && (
+                          <NestedFolderContents
+                            items={nestedContents}
+                            depth={depth + 1}
+                            expandedFolders={expandedFolders}
+                            documentsByFolder={documentsByFolder}
+                            folderErrors={folderErrors}
+                            selectedNoteId={selectedNoteId}
+                            onFolderToggle={onFolderToggle}
+                            onFolderOpen={onFolderOpen}
+                            onItemClick={onItemClick}
+                            onRename={onRename}
+                            onDelete={onDelete}
+                            editingItemId={editingItemId}
+                            editingItemName={editingItemName}
+                            setEditingItemName={setEditingItemName}
+                            onRenameKeyDown={onRenameKeyDown}
+                            onRenameSubmit={onRenameSubmit}
+                            onRetryFolder={onRetryFolder}
+                          />
+                        )}
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -473,7 +513,7 @@ function NestedFolderContents({
                   />
                 ) : (
                   <span className="flex-1 text-left truncate">
-                    {item.title || "Untitled"}
+                    {getDocumentDisplayTitle(item)}
                   </span>
                 )}
                 {/* Three-dot menu */}
@@ -547,6 +587,7 @@ export default function FilesView() {
 
   // Store state - select raw values, compute derived values with useMemo
   const documentsByFolder = useFilesStore((state) => state.documentsByFolder);
+  const folderErrors = useFilesStore((state) => state.folderErrors);
   const sortBy = useFilesStore((state) => state.sortBy);
   const sortDirection = useFilesStore((state) => state.sortDirection);
   const isLoading = useFilesStore((state) => state.isLoading);
@@ -608,6 +649,9 @@ export default function FilesView() {
   // Store actions
   const setWorkspaceAppId = useFilesStore((state) => state.setWorkspaceAppId);
   const fetchDocuments = useFilesStore((state) => state.fetchDocuments);
+  const handleRetryFolder = useCallback((folderId?: string) => {
+    void fetchDocuments(folderId);
+  }, [fetchDocuments]);
   const navigateToFolder = useFilesStore((state) => state.navigateToFolder);
   const navigateToBreadcrumb = useFilesStore((state) => state.navigateToBreadcrumb);
   const breadcrumbs = useFilesStore((state) => state.breadcrumbs);
@@ -950,6 +994,7 @@ export default function FilesView() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const titleInputRef = useRef<HTMLTextAreaElement>(null);
   const hasUnsyncedSelectedNote = !!(selectedNoteId && pendingEdits[selectedNoteId]);
+  const selectedNoteDisplayTitle = selectedNote ? getDocumentDisplayTitle(selectedNote) : "";
   const effectiveSaveStatus: SaveStatus =
     saveStatus === "error"
       ? "error"
@@ -1044,7 +1089,7 @@ export default function FilesView() {
   const handleRenameItem = (doc: Document) => {
     setOpenItemMenuId(null);
     setEditingItemId(doc.id);
-    setEditingItemName(doc.title);
+    setEditingItemName(getDocumentDisplayTitle(doc));
   };
 
   const handleRenameSubmit = (docId: string) => {
@@ -1190,7 +1235,7 @@ export default function FilesView() {
     if (doc) {
       if (doc.is_folder || doc.type === 'folder') {
         if (currentFolderId !== urlDocumentId) {
-          navigateToFolder(urlDocumentId, doc.title);
+          navigateToFolder(urlDocumentId, getDocumentDisplayTitle(doc));
         }
       } else {
         // Notes, images, and other file-backed documents open in the main panel
@@ -1588,6 +1633,7 @@ export default function FilesView() {
 
     // Handle files (uploaded files)
     const mimeType = getFileMimeType(doc);
+    const displayTitle = getDocumentDisplayTitle(doc);
 
     // Images - open inline in main panel (same as notes)
     if (mimeType.startsWith("image/")) {
@@ -1606,7 +1652,7 @@ export default function FilesView() {
           pdfUrl = url;
         }
         if (pdfUrl) {
-          setPreviewPdf({ url: pdfUrl, title: doc.title });
+          setPreviewPdf({ url: pdfUrl, title: displayTitle });
         }
       } catch (err) {
         console.error("Failed to load PDF:", err);
@@ -1626,7 +1672,7 @@ export default function FilesView() {
           docxUrl = url;
         }
         if (docxUrl) {
-          setPreviewDocx({ url: docxUrl, title: doc.title });
+          setPreviewDocx({ url: docxUrl, title: displayTitle });
         }
       } catch (err) {
         console.error("Failed to load DOCX:", err);
@@ -1646,7 +1692,7 @@ export default function FilesView() {
           pptxUrl = url;
         }
         if (pptxUrl) {
-          setPreviewPptx({ url: pptxUrl, title: doc.title });
+          setPreviewPptx({ url: pptxUrl, title: displayTitle });
         }
       } catch (err) {
         console.error("Failed to load PPTX:", err);
@@ -1669,7 +1715,7 @@ export default function FilesView() {
           xlsxUrl = url;
         }
         if (xlsxUrl) {
-          setPreviewXlsx({ url: xlsxUrl, title: doc.title });
+          setPreviewXlsx({ url: xlsxUrl, title: displayTitle });
         }
       } catch (err) {
         console.error("Failed to load spreadsheet:", err);
@@ -1686,7 +1732,7 @@ export default function FilesView() {
           videoUrl = url;
         }
         if (videoUrl) {
-          setPreviewVideo({ url: videoUrl, title: doc.title });
+          setPreviewVideo({ url: videoUrl, title: displayTitle });
         }
       } catch (err) {
         console.error("Failed to load video:", err);
@@ -1703,7 +1749,7 @@ export default function FilesView() {
           audioUrl = url;
         }
         if (audioUrl) {
-          setPreviewAudio({ url: audioUrl, title: doc.title });
+          setPreviewAudio({ url: audioUrl, title: displayTitle });
         }
       } catch (err) {
         console.error("Failed to load audio:", err);
@@ -1795,18 +1841,22 @@ export default function FilesView() {
     const appId = filesApp?.id;
     if (!appId) return null;
     try {
+      const contentType = file.type || 'image/png';
       const uploadInfo = await getPresignedUploadUrl({
         workspaceAppId: appId,
-        filename: file.name || `image-${Date.now()}.png`,
-        contentType: file.type || 'image/png',
+        filename: getSafeUploadFilename({ name: file.name, type: contentType }),
+        contentType,
         fileSize: file.size,
         createDocument: false,
       });
-      await fetch(uploadInfo.upload_url, {
+      const uploadResponse = await fetch(uploadInfo.upload_url, {
         method: 'PUT',
         headers: uploadInfo.headers,
         body: file,
       });
+      if (!uploadResponse.ok) {
+        throw new Error(`Image upload failed (${uploadResponse.status})`);
+      }
       await confirmFileUpload(uploadInfo.file_id, {
         workspaceAppId: appId,
         createDocument: false,
@@ -2071,7 +2121,14 @@ export default function FilesView() {
                   transition={{ duration: 0.1 }}
                   className="p-4 text-center text-sm text-red-500"
                 >
-                  {error}
+                  <div>{error}</div>
+                  <button
+                    type="button"
+                    onClick={() => handleRetryFolder(currentFolderId)}
+                    className="mt-2 text-xs font-medium text-red-600 hover:text-red-800"
+                  >
+                    Retry
+                  </button>
                 </motion.div>
               ) : documents.length === 0 ? (
                 <motion.div
@@ -2139,6 +2196,7 @@ export default function FilesView() {
                         const itemIsFolder = item.is_folder || item.type === "folder";
                         const isExpanded = itemIsFolder && expandedFolders.has(item.id);
                         const folderContents = itemIsFolder ? (documentsByFolder[item.id] || []) : [];
+                        const folderError = itemIsFolder ? folderErrors[item.id] : undefined;
 
                         // Show highlight when folder will receive the dropped item (nest mode)
                         const showMoveIntoHighlight = itemIsFolder && dropIntent?.type === 'moveInto' && dropIntent.targetId === item.id;
@@ -2208,7 +2266,7 @@ export default function FilesView() {
                                         />
                                       ) : (
                                         <span className="flex-1 text-left truncate">
-                                          {item.title}
+                                          {getDocumentDisplayTitle(item)}
                                         </span>
                                       )}
                                       {/* Three-dot menu + count overlay in same position */}
@@ -2293,7 +2351,7 @@ export default function FilesView() {
                                     />
                                   ) : (
                                     <span className="flex-1 text-left truncate">
-                                      {item.title || "Untitled"}
+                                      {getDocumentDisplayTitle(item)}
                                     </span>
                                   )}
                                   {editingItemId !== item.id && (
@@ -2396,7 +2454,7 @@ export default function FilesView() {
                           {/* Expanded folder contents */}
                           {itemIsFolder && (
                             <AnimatePresence>
-                              {isExpanded && folderContents.length > 0 && (
+                              {isExpanded && (folderContents.length > 0 || folderError) && (
                                 <motion.div
                                   initial={{ height: 0, opacity: 0 }}
                                   animate={{ height: "auto", opacity: 1 }}
@@ -2404,23 +2462,33 @@ export default function FilesView() {
                                   transition={{ duration: 0.15 }}
                                   className="overflow-hidden"
                                 >
-                                  <NestedFolderContents
-                                    items={folderContents}
-                                    depth={1}
-                                    expandedFolders={expandedFolders}
-                                    documentsByFolder={documentsByFolder}
-                                    selectedNoteId={selectedNoteId}
-                                    onFolderToggle={handleFolderClick}
-                                    onFolderOpen={handleOpenFolder}
-                                    onItemClick={handleItemClick}
-                                    onRename={handleRenameItem}
-                                    onDelete={handleDeleteClick}
-                                    editingItemId={editingItemId}
-                                    editingItemName={editingItemName}
-                                    setEditingItemName={setEditingItemName}
-                                    onRenameKeyDown={handleRenameKeyDown}
-                                    onRenameSubmit={handleRenameSubmit}
-                                  />
+                                  {folderError && (
+                                    <FolderFetchErrorRow
+                                      message={folderError}
+                                      onRetry={() => handleRetryFolder(item.id)}
+                                    />
+                                  )}
+                                  {folderContents.length > 0 && (
+                                    <NestedFolderContents
+                                      items={folderContents}
+                                      depth={1}
+                                      expandedFolders={expandedFolders}
+                                      documentsByFolder={documentsByFolder}
+                                      folderErrors={folderErrors}
+                                      selectedNoteId={selectedNoteId}
+                                      onFolderToggle={handleFolderClick}
+                                      onFolderOpen={handleOpenFolder}
+                                      onItemClick={handleItemClick}
+                                      onRename={handleRenameItem}
+                                      onDelete={handleDeleteClick}
+                                      editingItemId={editingItemId}
+                                      editingItemName={editingItemName}
+                                      setEditingItemName={setEditingItemName}
+                                      onRenameKeyDown={handleRenameKeyDown}
+                                      onRenameSubmit={handleRenameSubmit}
+                                      onRetryFolder={handleRetryFolder}
+                                    />
+                                  )}
                                 </motion.div>
                               )}
                             </AnimatePresence>
@@ -2444,7 +2512,7 @@ export default function FilesView() {
                         ) : (
                           <span className="shrink-0">{getFileIcon(activeDragItem, "w-4 h-4")}</span>
                         )}
-                        <span className="truncate">{activeDragItem.title || "Untitled"}</span>
+                        <span className="truncate">{getDocumentDisplayTitle(activeDragItem)}</span>
                       </div>
                     )}
                   </DragOverlay>
@@ -2569,13 +2637,13 @@ export default function FilesView() {
               {/* Image viewer header */}
               <div className="h-12 shrink-0 flex items-center justify-between pl-6 pr-3 border-b border-border-gray">
                 <span className="text-sm font-medium text-text-body truncate">
-                  {selectedNote.title}
+                  {selectedNoteDisplayTitle}
                 </span>
                 <div className="flex items-center gap-1">
                   {inlineImageUrl && (
                     <a
                       href={inlineImageUrl}
-                      download={selectedNote.title}
+                      download={selectedNoteDisplayTitle}
                       className="p-2 rounded-lg hover:bg-bg-gray transition-colors"
                       title="Download"
                     >
@@ -2590,9 +2658,9 @@ export default function FilesView() {
                 {inlineImageUrl ? (
                   <img
                     src={inlineImageUrl}
-                    alt={selectedNote.title}
+                    alt={selectedNoteDisplayTitle}
                     className="max-w-full max-h-full object-contain rounded-lg cursor-zoom-in"
-                    onClick={() => setPreviewImage({ url: inlineImageUrl, title: selectedNote.title })}
+                    onClick={() => setPreviewImage({ url: inlineImageUrl, title: selectedNoteDisplayTitle })}
                   />
                 ) : (
                   <div className="animate-pulse w-48 h-48 bg-bg-gray rounded-lg" />
@@ -3011,7 +3079,7 @@ export default function FilesView() {
             ? "Delete Folder"
             : "Delete Note"
         }
-        message={`Are you sure you want to delete "${deleteTarget?.title || "Untitled"}"? This action cannot be undone.`}
+        message={`Are you sure you want to delete "${deleteTarget ? getDocumentDisplayTitle(deleteTarget) : "Untitled"}"? This action cannot be undone.`}
         confirmLabel="Delete"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteTarget(null)}

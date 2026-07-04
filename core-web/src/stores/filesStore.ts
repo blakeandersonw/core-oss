@@ -18,6 +18,7 @@ import {
 } from '../api/client';
 import { markLocalDocumentReorder } from '../lib/documentRealtimeGuard';
 import { resolveUploadMimeType } from '../utils/uploadMime';
+import { getGeneratedFileTitleRepair, getSafeUploadFilename } from '../utils/files';
 
 interface Breadcrumb {
   id?: string;
@@ -40,6 +41,7 @@ interface PendingEdit {
 interface FilesState {
   // Data - keyed by folderId (undefined = root)
   documentsByFolder: Record<string, Document[]>;
+  folderErrors: Record<string, string>;
 
   // Workspace-level cache for instant switching
   workspaceDocCache: Record<string, WorkspaceDocCache>;
@@ -112,6 +114,22 @@ const ROOT_KEY = '__root__';
 
 function folderKey(id?: string): string {
   return id || ROOT_KEY;
+}
+
+function getFilesErrorMessage(err: unknown, fallback: string): string {
+  const message = err instanceof Error ? err.message : String(err || '');
+  const normalized = message.trim().toLowerCase();
+
+  if (
+    normalized === 'failed to fetch' ||
+    normalized.includes('networkerror') ||
+    normalized.includes('load failed') ||
+    normalized.includes('network request failed')
+  ) {
+    return 'Could not load this folder. Check your connection and try again.';
+  }
+
+  return message.trim() || fallback;
 }
 
 // Track fetch versions per workspace+folder to prevent stale responses from overwriting newer data
@@ -212,6 +230,7 @@ export const useFilesStore = create<FilesState>()(
   persist<FilesState, [], [], FilesPersistedState>(
     (set, get) => ({
   documentsByFolder: {},
+  folderErrors: {},
   workspaceDocCache: {},
   workspaceAppId: null,
   currentFolderId: undefined,
@@ -272,6 +291,7 @@ export const useFilesStore = create<FilesState>()(
         set({
           workspaceAppId: id,
           documentsByFolder,
+          folderErrors: {},
           currentFolderId: undefined,
           breadcrumbs: [{ title: 'All' }],
           selectedNoteId: null,
@@ -290,6 +310,7 @@ export const useFilesStore = create<FilesState>()(
         set({
           workspaceAppId: id,
           documentsByFolder: {},
+          folderErrors: {},
           currentFolderId: undefined,
           breadcrumbs: [{ title: 'All' }],
           selectedNoteId: null,
@@ -341,6 +362,19 @@ export const useFilesStore = create<FilesState>()(
       set({ isSyncing: true });
     }
 
+    set((state) => {
+      if (!state.folderErrors[key] && (folderId !== currentFolderId || !state.error)) {
+        return {};
+      }
+
+      const nextFolderErrors = { ...state.folderErrors };
+      delete nextFolderErrors[key];
+      return {
+        folderErrors: nextFolderErrors,
+        error: folderId === currentFolderId ? null : state.error,
+      };
+    });
+
     try {
       const result = await getDocuments({
         workspaceAppId,
@@ -352,14 +386,26 @@ export const useFilesStore = create<FilesState>()(
       if (fetchVersions[versionKey] === version) {
         // Apply any pending edits to the fetched documents
         // This ensures unsaved edits aren't lost when data is refreshed from API
+        const repairs: Array<{ id: string; title: string }> = [];
         const docsWithPendingEdits = (result.documents || []).map(doc => {
           const pendingEdit = get().pendingEdits[doc.id];
           if (pendingEdit) {
             return { ...doc, title: pendingEdit.title, content: pendingEdit.content };
           }
+          const repairTitle = getGeneratedFileTitleRepair(doc);
+          if (repairTitle) {
+            repairs.push({ id: doc.id, title: repairTitle });
+            return { ...doc, title: repairTitle };
+          }
           return doc;
         });
         rememberNoteVersionTokens(docsWithPendingEdits);
+
+        for (const repair of repairs) {
+          void updateDocument(repair.id, { title: repair.title }).catch((repairErr) => {
+            console.warn('[FilesStore] Failed to repair generated file title:', repairErr);
+          });
+        }
 
         set((state) => {
           const newDocsByFolder = {
@@ -394,6 +440,9 @@ export const useFilesStore = create<FilesState>()(
           return {
             documentsByFolder: newDocsByFolder,
             workspaceDocCache: newWorkspaceCache,
+            folderErrors: Object.fromEntries(
+              Object.entries(state.folderErrors).filter(([folderId]) => folderId !== key)
+            ),
             error: null,
           };
         });
@@ -408,7 +457,14 @@ export const useFilesStore = create<FilesState>()(
       if (fetchVersions[versionKey] === version) {
         // Only set error if still on the same workspace
         if (get().workspaceAppId === workspaceAppId) {
-          set({ error: err instanceof Error ? err.message : 'Failed to load files' });
+          const message = getFilesErrorMessage(err, 'Failed to load files');
+          set((state) => ({
+            folderErrors: {
+              ...state.folderErrors,
+              [key]: message,
+            },
+            error: folderId === currentFolderId ? message : state.error,
+          }));
         }
       }
     } finally {
@@ -606,7 +662,7 @@ export const useFilesStore = create<FilesState>()(
         return {
           documentsByFolder: updated,
           selectedNoteId: state.selectedNoteId === tempId ? null : state.selectedNoteId,
-          error: err instanceof Error ? err.message : 'Failed to create note',
+          error: getFilesErrorMessage(err, 'Failed to create note'),
         };
       });
       return null;
@@ -711,7 +767,7 @@ export const useFilesStore = create<FilesState>()(
         return {
           documentsByFolder: updated,
           renamingId: state.renamingId === tempId ? null : state.renamingId,
-          error: err instanceof Error ? err.message : 'Failed to create folder',
+          error: getFilesErrorMessage(err, 'Failed to create folder'),
         };
       });
     });
@@ -723,6 +779,7 @@ export const useFilesStore = create<FilesState>()(
     // Check if this is a temp ID that hasn't been resolved yet
     const isTempId = docId.startsWith('temp-folder-');
     const realId = tempIdToRealId[docId];
+    const previousTitles: Record<string, string> = {};
 
     // Optimistic update across all folder caches
     // Update both temp ID and real ID in case the document hasn't been replaced yet
@@ -730,7 +787,13 @@ export const useFilesStore = create<FilesState>()(
       const updated = { ...state.documentsByFolder };
       for (const key of Object.keys(updated)) {
         updated[key] = updated[key].map(d =>
-          (d.id === docId || (realId && d.id === realId)) ? { ...d, title: newTitle } : d
+          {
+            if (d.id === docId || (realId && d.id === realId)) {
+              previousTitles[d.id] = d.title;
+              return { ...d, title: newTitle };
+            }
+            return d;
+          }
         );
       }
       return { documentsByFolder: updated, renamingId: null };
@@ -751,9 +814,20 @@ export const useFilesStore = create<FilesState>()(
         delete tempIdToRealId[docId];
       }
     } catch (err) {
-      // Refetch on error
-      get().fetchDocuments(get().currentFolderId);
-      set({ error: err instanceof Error ? err.message : 'Failed to rename' });
+      set((state) => {
+        const updated = { ...state.documentsByFolder };
+        for (const key of Object.keys(updated)) {
+          updated[key] = updated[key].map((doc) => {
+            const previousTitle = previousTitles[doc.id];
+            return previousTitle === undefined ? doc : { ...doc, title: previousTitle };
+          });
+        }
+
+        return {
+          documentsByFolder: updated,
+          error: getFilesErrorMessage(err, 'Failed to rename'),
+        };
+      });
     }
   },
 
@@ -956,7 +1030,7 @@ export const useFilesStore = create<FilesState>()(
       if (!msg.includes('not found') && !msg.includes('404')) {
         // Refetch on error to restore state
         get().fetchDocuments(get().currentFolderId);
-        set({ error: msg });
+        set({ error: getFilesErrorMessage(err, 'Failed to delete document') });
       }
     }
   },
@@ -985,7 +1059,7 @@ export const useFilesStore = create<FilesState>()(
         return { documentsByFolder: newCache };
       });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'Failed to toggle favorite' });
+      set({ error: getFilesErrorMessage(err, 'Failed to toggle favorite') });
     }
   },
 
@@ -1050,10 +1124,11 @@ export const useFilesStore = create<FilesState>()(
       const uploadOne = async (file: File) => {
         try {
           const t0 = performance.now();
+          const uploadFilename = getSafeUploadFilename(file);
           const uploadInfo = await getPresignedUploadUrl({
             workspaceAppId,
             workspaceId: workspaceId ?? undefined,
-            filename: file.name,
+            filename: uploadFilename,
             contentType: resolveUploadMimeType(file),
             fileSize: file.size,
             parentId,
@@ -1285,7 +1360,7 @@ export const useFilesStore = create<FilesState>()(
       for (const key of foldersToRefresh) {
         void get().fetchDocuments(key === ROOT_KEY ? undefined : key);
       }
-      set({ error: err instanceof Error ? err.message : 'Failed to move document' });
+      set({ error: getFilesErrorMessage(err, 'Failed to move document') });
     }
   },
 
@@ -1399,7 +1474,7 @@ export const useFilesStore = create<FilesState>()(
         }
         return {
           documentsByFolder: updated,
-          error: err instanceof Error ? err.message : 'Failed to duplicate document',
+          error: getFilesErrorMessage(err, 'Failed to duplicate document'),
         };
       });
       return null;
