@@ -1087,7 +1087,6 @@ export interface Email {
   source?: 'local' | 'remote';
   connection_id?: string;
   message_count?: number;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   raw_item?: any;
 }
 
@@ -1149,7 +1148,6 @@ function parseFromField(from: string): { from_email: string; from_name?: string 
 
 // raw_item.id is only a Gmail draft ID when the payload is a draft wrapper.
 // For plain message payloads, raw_item.id is a Gmail message ID.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractGmailDraftId(rawItem: any): string | undefined {
   if (!rawItem || typeof rawItem !== 'object') return undefined;
   if (typeof rawItem.gmail_draft_id === 'string' && rawItem.gmail_draft_id) {
@@ -1176,7 +1174,6 @@ export async function getEmails(options?: {
   if (options?.accountIds) options.accountIds.forEach(id => params.append('account_ids', id));
 
   const queryString = params.toString();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await api<{ emails: any[]; count: number; unified: boolean; has_more: boolean; accounts_status?: any[] }>(
     `/email/messages${queryString ? `?${queryString}` : ''}`
   );
@@ -1242,7 +1239,6 @@ export async function searchEmails(options: {
   provider_search?: boolean;
   max_results?: number;
 }): Promise<SearchEmailsResponse> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await api<any>('/email/search', {
     method: 'POST',
     body: JSON.stringify({
@@ -1296,7 +1292,6 @@ export async function fetchRemoteEmail(options: {
   connection_id: string;
 }): Promise<{ success: boolean; email?: Email; error?: string }> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response = await api<any>('/email/fetch-remote', {
       method: 'POST',
       body: JSON.stringify(options),
@@ -1347,7 +1342,6 @@ export async function getEmailCounts(accountIds?: string[]): Promise<EmailCounts
 }
 
 export async function getEmailDetails(emailId: string): Promise<{ email: Email }> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await api<any>(`/email/messages/${emailId}`);
   // The actual email data is nested under 'email' key from backend
   const e = response.email || response;
@@ -1381,7 +1375,6 @@ export async function getEmailDetails(emailId: string): Promise<{ email: Email }
 }
 
 export async function getThreadDetails(threadId: string): Promise<ThreadResponse> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await api<any>(`/email/threads/${threadId}`);
   const threadData = response.thread || response;
 
@@ -1390,7 +1383,9 @@ export async function getThreadDetails(threadId: string): Promise<ThreadResponse
   // For sent emails, 'from' may be empty - use account_email as fallback (it's the user's own email)
   const emails: EmailWithAttachments[] = (threadData.emails || []).map((e: Record<string, unknown>) => {
     const fromRaw = (e.from as string) || (e.sender as string) || '';
-    let { from_email, from_name } = parseFromField(fromRaw);
+    const parsedFrom = parseFromField(fromRaw);
+    let { from_email } = parsedFrom;
+    const { from_name } = parsedFrom;
 
     // If from is empty, use account_email as fallback (for sent emails)
     if (!from_email && e.account_email) {

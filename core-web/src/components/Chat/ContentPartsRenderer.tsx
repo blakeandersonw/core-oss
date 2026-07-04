@@ -936,7 +936,7 @@ function ContentPartsRenderer({ parts, messageId, isStreaming }: ContentPartsRen
     <>
       {parts.map((part, index) => {
         switch (part.type) {
-          case 'text':
+          case 'text': {
             // Only animate the last text part during streaming
             const isLastTextPart = index === lastTextPartIndex;
             return (
@@ -946,6 +946,7 @@ function ContentPartsRenderer({ parts, messageId, isStreaming }: ContentPartsRen
                 isStreaming={isStreaming && isLastTextPart}
               />
             );
+          }
           case 'display': {
             // Skip display cards when inline refs handle the linking
             const dt = part.data.display_type as string;

@@ -98,7 +98,7 @@ function decodeHtmlEntities(text: string): string {
 function stripQuotedFromSnippet(snippet: string): string {
   // Broad pattern: "On [anything with a year], [name/email] wrote:"
   const quotePattern =
-    /\s*On\s+[\w,.\s\/]+\d{4}[\w,.\s:]*(?:<[^>]+>|\[[^\]]*\][>]?|[^<\[]*)\s*wrote:.*/is;
+    /\s*On\s+[\w,.\s/]+\d{4}[\w,.\s:]*(?:<[^>]+>|\[[^\]]*\][>]?|[^<[]*)\s*wrote:.*/is;
   const match = snippet.match(quotePattern);
   if (match && match.index !== undefined && match.index > 0) {
     return snippet.slice(0, match.index).trim();
@@ -176,7 +176,7 @@ function splitQuotedContent(html: string): {
   // - "On Mon, Feb 2, 2026 at 10:38 AM John wrote:"
   // - "On Wed, February 18, 2026 3:45 PM, Name [email@example.com]> wrote:"
   const textQuotePattern =
-    /On\s+[\w,.\s\/]+\d{4}[\w,.\s:]*(?:&lt;[^&]*&gt;|<[^>]*>|\[[^\]]*\][>]?)?\s*wrote:/i;
+    /On\s+[\w,.\s/]+\d{4}[\w,.\s:]*(?:&lt;[^&]*&gt;|<[^>]*>|\[[^\]]*\][>]?)?\s*wrote:/i;
   const textMatch = html.match(textQuotePattern);
   if (textMatch && textMatch.index !== undefined) {
     const mainContent = html.slice(0, textMatch.index).trim();
@@ -691,7 +691,6 @@ export default function EmailView() {
       clearSearch();
       setIsSearchOpen(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFolder]);
 
   const handleSync = async () => {

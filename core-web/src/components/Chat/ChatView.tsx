@@ -273,7 +273,6 @@ export default function ChatView() {
     }
 
     loadMessages();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlConversationId, setActiveConversationId, hasChattedThisSession]);
 
   // Drag-drop handlers

@@ -76,7 +76,6 @@ export function useScrollBehavior({
     setStreamingHeight(element.offsetHeight);
 
     return () => resizeObserver.disconnect();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasStreamingContent ? 'streaming' : 'idle']);
 
   // When user sends a message, calculate fixed container height

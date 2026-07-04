@@ -99,7 +99,6 @@ import RequestAccessCard from "../RequestAccessCard";
 import { useUIStore } from "../../stores/uiStore";
 
 // Helper to handle chunk load failures (e.g., after deployment with new hashes)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function lazyWithRetry(importFn: () => Promise<any>) {
   return lazy(() =>
     importFn().catch(() => {

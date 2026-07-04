@@ -1505,17 +1505,19 @@ export const useFilesStore = create<FilesState>()(
         case 'name':
           comparison = (a.title || '').localeCompare(b.title || '');
           break;
-        case 'size':
+        case 'size': {
           const sizeA = a.file?.file_size || a.file_size || 0;
           const sizeB = b.file?.file_size || b.file_size || 0;
           comparison = sizeA - sizeB;
           break;
+        }
         case 'date':
-        default:
+        default: {
           const dateA = new Date(a.updated_at || a.created_at).getTime();
           const dateB = new Date(b.updated_at || b.created_at).getTime();
           comparison = dateA - dateB;
           break;
+        }
       }
 
       return sortDirection === 'desc' ? -comparison : comparison;

@@ -263,7 +263,7 @@ export default function Sidebar() {
     } else {
       if (activeProductType !== 'workspace') setActiveProductType('workspace');
     }
-  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
 
   // Preload all workspace images to avoid loading delay when switching
   useEffect(() => {

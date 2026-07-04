@@ -15,7 +15,6 @@ interface UseChatStreamParams {
   workspaceId?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type StreamEvent = any;
 
 /**

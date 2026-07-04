@@ -5,7 +5,6 @@ import type { Components } from 'react-markdown';
 import { AnimatedMarkdown } from 'flowtoken';
 import 'flowtoken/dist/styles.css';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnimateText = (children: any) => any;
 
 interface StreamingTextProps {
@@ -17,9 +16,7 @@ interface StreamingTextProps {
 // ---------------------------------------------------------------------------
 // Build animated component wrappers for flowtoken
 // ---------------------------------------------------------------------------
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const makeAnimatedComponents = (base: Record<string, any>): Record<string, any> => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const animated: Record<string, any> = {};
   for (const [tag, Component] of Object.entries(base)) {
     if (tag === 'code') {
