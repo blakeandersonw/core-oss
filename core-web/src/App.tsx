@@ -24,6 +24,7 @@ import { useResumeRevalidation } from "./hooks/useResumeRevalidation";
 import { Sentry, setSentryUser } from "./lib/sentry";
 import { identifyUser, resetUser, trackPageView } from "./lib/posthog";
 import { FeatureErrorBoundary } from "./components/ui/FeatureErrorBoundary";
+import { resolveBootstrapGate } from "./lib/bootstrapRouting";
 
 const OAuthCallback = lazy(() => import("./components/OAuthCallback"));
 const InviteAcceptPage = lazy(() => import("./pages/InviteAcceptPage"));
@@ -150,6 +151,41 @@ function RouteLoading() {
   );
 }
 
+function FullScreenRouteLoading() {
+  return (
+    <div className="h-screen w-screen flex bg-white">
+      <RouteLoading />
+    </div>
+  );
+}
+
+function BootstrapErrorScreen({
+  message,
+  onRetry,
+}: {
+  message: string | null;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="h-screen w-screen flex items-center justify-center bg-white">
+      <div className="flex flex-col items-center gap-4 max-w-md text-center px-6">
+        <h1 className="text-xl font-semibold text-text-dark">
+          We could not finish loading your account
+        </h1>
+        <p className="text-sm text-text-secondary">
+          {message || "Check your connection and try again."}
+        </p>
+        <button
+          onClick={onRetry}
+          className="px-4 py-2 text-sm font-medium rounded-lg bg-brand-primary text-white hover:opacity-90 transition-opacity"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SidebarSkeleton() {
   return (
     <div className="w-16 shrink-0 bg-[#E3E3E5] flex flex-col items-center py-3 gap-3">
@@ -211,6 +247,9 @@ function AppContent() {
     initialize: initAuth,
     isAuthenticated,
     isLoading: authLoading,
+    profileStatus,
+    profileError,
+    fetchUserProfile,
     user,
   } = useAuthStore();
   const { fetchInitData, activeWorkspaceId, workspaces, getSessionApp } = useWorkspaceStore();
@@ -399,11 +438,28 @@ function AppContent() {
     );
   }
 
-  // While authenticated but onboarding status not yet known, show a blank screen
-  // to prevent flashing the app before redirecting new users to onboarding.
-  // undefined = not yet loaded; null = loaded, not completed; string = completed.
-  if (isAuthenticated && !authLoading && onboardingCompletedAt === undefined && !isInviteRoute && !isShareLinkRoute) {
-    return <div className="h-screen w-screen bg-white" />;
+  const bootstrapGate = resolveBootstrapGate({
+    isAuthenticated,
+    authLoading,
+    onboardingCompletedAt,
+    profileStatus,
+    isInviteRoute,
+    isShareLinkRoute,
+  });
+
+  if (bootstrapGate === "loading") {
+    return <FullScreenRouteLoading />;
+  }
+
+  if (bootstrapGate === "profile-error") {
+    return (
+      <BootstrapErrorScreen
+        message={profileError}
+        onRetry={() => {
+          void fetchUserProfile();
+        }}
+      />
+    );
   }
 
   // Check if user needs onboarding (status loaded and not completed)

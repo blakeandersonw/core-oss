@@ -7,6 +7,7 @@ Uses async Supabase client for non-blocking I/O.
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import logging
+from api.super_admin import is_super_admin_user_id
 from lib.supabase_client import get_authenticated_async_client, get_async_service_role_client
 from lib.image_proxy import generate_image_url
 
@@ -49,6 +50,25 @@ async def get_workspaces(
         List of workspaces with membership info
     """
     try:
+        if await is_super_admin_user_id(user_id):
+            supabase = await get_async_service_role_client()
+            result = await supabase.table("workspaces")\
+                .select("id, name, owner_id, is_default, emoji, icon_r2_key, created_at, updated_at")\
+                .order("created_at")\
+                .execute()
+
+            workspaces = []
+            for workspace in result.data or []:
+                workspace["role"] = "owner"
+                workspace["joined_at"] = workspace.get("created_at")
+                workspace["is_shared"] = False
+                workspace["is_super_admin_access"] = True
+                workspaces.append(workspace)
+
+            _enrich_workspaces_with_icon_url(workspaces)
+            logger.info(f"Fetched {len(workspaces)} workspaces for super admin {user_id}")
+            return workspaces
+
         supabase = await get_authenticated_async_client(user_jwt)
 
         # Get workspaces through membership

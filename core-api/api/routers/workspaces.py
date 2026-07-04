@@ -755,7 +755,7 @@ async def list_apps_endpoint(
     """
     try:
         logger.info(f"Listing apps for workspace {workspace_id}")
-        apps = await get_workspace_apps(workspace_id, user_jwt)
+        apps = await get_workspace_apps(workspace_id, user_jwt, user_id)
         return {
             "apps": apps,
             "count": len(apps)

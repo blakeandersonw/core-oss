@@ -1,17 +1,29 @@
 """
 Authentication router - HTTP endpoints for auth operations
 """
-from typing import Annotated, Optional, List, Dict, Any
+from typing import Annotated, Optional, List, Dict, Any, Literal
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from api.services.auth import AuthService
+from api.services.composio import (
+    create_connect_link,
+    get_connected_account_profile,
+    make_login_composio_user_id,
+    normalize_redirect_to,
+    resolve_frontend_origin,
+    sign_login_state,
+    validate_provider,
+    verify_login_state,
+)
 from api.services.workspaces.invitations import resolve_post_signup_pending_invitations
 from api.dependencies import get_current_user_email, get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
 from api.schemas import MessageResponse
 from api.config import settings
 from api.rate_limit import limiter, _get_client_ip
+from lib.supabase_client import get_service_role_client
 import httpx
 import logging
 
@@ -84,6 +96,205 @@ async def get_oauth_config():
         google_client_id=settings.google_client_id,
         microsoft_client_id=settings.microsoft_client_id or None,
         supported_providers=["google", "microsoft"]
+    )
+
+
+# ============== Composio Sign-in Bridge ==============
+
+class ComposioLoginStartRequest(BaseModel):
+    provider: Literal["google", "microsoft"]
+    redirect_to: Optional[str] = None
+
+
+class ComposioLoginStartResponse(BaseModel):
+    redirect_url: str
+
+
+class ComposioLoginCompleteRequest(BaseModel):
+    provider: Literal["google", "microsoft"]
+    state: str
+    status: Optional[str] = None
+    connected_account_id: str
+
+
+class ComposioLoginCompleteResponse(BaseModel):
+    email: EmailStr
+    token_hash: str
+    redirect_to: str
+
+
+def _read_field(value: Any, field: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(field)
+    return getattr(value, field, None)
+
+
+def _read_nested_field(value: Any, *fields: str) -> Any:
+    current = value
+    for field in fields:
+        current = _read_field(current, field)
+        if current is None:
+            return None
+    return current
+
+
+def _ensure_auth_user_and_magic_token(
+    *,
+    email: str,
+    name: Optional[str],
+    avatar_url: Optional[str],
+    provider: str,
+) -> str:
+    service_supabase = get_service_role_client()
+    user_metadata = {
+        "name": name,
+        "full_name": name,
+        "avatar_url": avatar_url,
+        "picture": avatar_url,
+        "composio_provider": provider,
+    }
+    user_metadata = {k: v for k, v in user_metadata.items() if v}
+    params = {
+        "type": "magiclink",
+        "email": email,
+        "options": {"data": user_metadata},
+    }
+
+    try:
+        link = service_supabase.auth.admin.generate_link(params)
+    except Exception as generate_error:
+        logger.info("Creating Supabase Auth user for Composio sign-in: %s", email)
+        try:
+            service_supabase.auth.admin.create_user({
+                "email": email,
+                "email_confirm": True,
+                "user_metadata": user_metadata,
+            })
+        except Exception as create_error:
+            if "already" not in str(create_error).lower() and "registered" not in str(create_error).lower():
+                raise create_error
+        try:
+            link = service_supabase.auth.admin.generate_link(params)
+        except Exception as retry_error:
+            logger.error("Failed to generate Supabase magic link after Composio auth: %s", retry_error)
+            raise generate_error from retry_error
+
+    token_hash = _read_nested_field(link, "properties", "hashed_token")
+    user = _read_field(link, "user")
+    user_id = _read_field(user, "id")
+    if not token_hash or not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Supabase did not return a login token",
+        )
+
+    existing = service_supabase.table("users")\
+        .select("id, name, avatar_url")\
+        .eq("id", user_id)\
+        .maybe_single()\
+        .execute()
+
+    if existing.data:
+        updates: Dict[str, Any] = {"email": email}
+        if name and not existing.data.get("name"):
+            updates["name"] = name
+        if avatar_url and not existing.data.get("avatar_url"):
+            updates["avatar_url"] = avatar_url
+        service_supabase.table("users").update(updates).eq("id", user_id).execute()
+    else:
+        service_supabase.table("users").insert({
+            "id": user_id,
+            "email": email,
+            "name": name,
+            "avatar_url": avatar_url,
+        }).execute()
+
+    return token_hash
+
+
+@router.post("/composio/start", response_model=ComposioLoginStartResponse)
+@limiter.limit("10/minute;100/day", key_func=_get_client_ip)
+async def start_composio_login(
+    request: Request,
+    response: Response,
+    body: ComposioLoginStartRequest,
+):
+    """Start a Composio Connect Link sign-in and return the hosted auth URL."""
+    provider = validate_provider(body.provider)
+    frontend_origin = resolve_frontend_origin(request.headers.get("origin"))
+    redirect_to = normalize_redirect_to(body.redirect_to, frontend_origin)
+    composio_user_id = make_login_composio_user_id()
+    state = sign_login_state(
+        provider=provider,
+        redirect_to=redirect_to,
+        composio_user_id=composio_user_id,
+    )
+    callback_query = urlencode({
+        'flow': 'composio-login',
+        'provider': provider,
+        'state': state,
+    })
+    callback_url = f"{frontend_origin}/oauth/callback?{callback_query}"
+
+    link = await create_connect_link(
+        provider=provider,
+        user_id=composio_user_id,
+        callback_url=callback_url,
+    )
+    redirect_url = link.get("redirect_url")
+    if not isinstance(redirect_url, str) or not redirect_url:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Composio did not return a redirect URL",
+        )
+    return ComposioLoginStartResponse(redirect_url=redirect_url)
+
+
+@router.post("/composio/complete-login", response_model=ComposioLoginCompleteResponse)
+@limiter.limit("10/minute;100/day", key_func=_get_client_ip)
+async def complete_composio_login(
+    request: Request,
+    response: Response,
+    body: ComposioLoginCompleteRequest,
+):
+    """
+    Complete Composio sign-in by minting a Supabase email-token session.
+
+    Composio proves the Google/Microsoft account connection; Supabase remains
+    the app's session issuer so existing RLS and Supabase client flows continue
+    to work.
+    """
+    if body.status and body.status != "success":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Composio authentication did not complete successfully",
+        )
+
+    provider = validate_provider(body.provider)
+    state_payload = verify_login_state(body.state)
+    if state_payload.get("provider") != provider:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Composio auth provider mismatch",
+        )
+
+    profile = await get_connected_account_profile(
+        provider=provider,
+        user_id=str(state_payload["composio_user_id"]),
+        connected_account_id=body.connected_account_id,
+    )
+    email = str(profile["email"])
+    token_hash = _ensure_auth_user_and_magic_token(
+        email=email,
+        name=profile.get("name"),
+        avatar_url=profile.get("avatar_url"),
+        provider=provider,
+    )
+
+    return ComposioLoginCompleteResponse(
+        email=email,
+        token_hash=token_hash,
+        redirect_to=str(state_payload.get("redirect_to") or resolve_frontend_origin(request.headers.get("origin"))),
     )
 
 

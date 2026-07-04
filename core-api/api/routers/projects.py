@@ -43,7 +43,6 @@ from api.dependencies import get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
 from lib.supabase_client import get_authenticated_async_client
 from api.services.projects.access import (
-    get_issue_context,
     require_board_capability,
     require_issue_capability,
 )
@@ -463,6 +462,72 @@ class CommentListResponse(BaseModel):
     total_count: int  # Total comments for this issue
 
 
+class ProjectBoardRolePresetResponse(BaseModel):
+    """Response model for a board role preset."""
+    id: Optional[str] = None
+    workspace_id: Optional[str] = None
+    board_id: str
+    role: str
+    capabilities: Dict[str, bool] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class ProjectBoardMemberPermissionResponse(BaseModel):
+    """Response model for a board member permission override."""
+    id: Optional[str] = None
+    workspace_id: Optional[str] = None
+    board_id: str
+    user_id: str
+    capabilities: Dict[str, bool] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class BoardRolePresetsResponse(BaseModel):
+    """Response model for board role presets and resolved capabilities."""
+    role_presets: List[ProjectBoardRolePresetResponse]
+    member_permissions: List[ProjectBoardMemberPermissionResponse]
+    capabilities: Dict[str, bool]
+
+
+class ProjectBoardRolePresetEnvelopeResponse(BaseModel):
+    role_preset: ProjectBoardRolePresetResponse
+
+
+class ProjectBoardViewResponse(BaseModel):
+    """Response model for a saved board view."""
+    id: str
+    workspace_id: str
+    board_id: str
+    name: str
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    sort: List[Dict[str, Any]] = Field(default_factory=list)
+    layout: str
+    is_shared: bool = True
+    created_by: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class ProjectBoardViewListResponse(BaseModel):
+    views: List[ProjectBoardViewResponse]
+    count: int
+
+
+class ProjectBoardViewEnvelopeResponse(BaseModel):
+    view: ProjectBoardViewResponse
+
+
 # ============================================================================
 # Board Endpoints
 # ============================================================================
@@ -575,7 +640,7 @@ async def delete_board_endpoint(
         handle_api_exception(e, "Failed to delete board", logger)
 
 
-@router.get("/boards/{board_id}/role-presets")
+@router.get("/boards/{board_id}/role-presets", response_model=BoardRolePresetsResponse)
 async def get_board_role_presets_endpoint(
     board_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
@@ -613,7 +678,7 @@ async def get_board_role_presets_endpoint(
         handle_api_exception(e, "Failed to fetch board permissions", logger)
 
 
-@router.put("/boards/{board_id}/role-presets/{role}")
+@router.put("/boards/{board_id}/role-presets/{role}", response_model=ProjectBoardRolePresetEnvelopeResponse)
 async def upsert_board_role_preset_endpoint(
     board_id: str,
     role: str,
@@ -650,7 +715,7 @@ async def upsert_board_role_preset_endpoint(
         handle_api_exception(e, "Failed to save board role preset", logger)
 
 
-@router.get("/boards/{board_id}/views")
+@router.get("/boards/{board_id}/views", response_model=ProjectBoardViewListResponse)
 async def list_board_views_endpoint(
     board_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
@@ -668,7 +733,7 @@ async def list_board_views_endpoint(
         handle_api_exception(e, "Failed to fetch board views", logger)
 
 
-@router.post("/boards/{board_id}/views", status_code=status.HTTP_201_CREATED)
+@router.post("/boards/{board_id}/views", response_model=ProjectBoardViewEnvelopeResponse, status_code=status.HTTP_201_CREATED)
 async def create_board_view_endpoint(
     board_id: str,
     request: CreateBoardViewRequest,
@@ -700,7 +765,7 @@ async def create_board_view_endpoint(
         handle_api_exception(e, "Failed to create board view", logger)
 
 
-@router.patch("/views/{view_id}")
+@router.patch("/views/{view_id}", response_model=ProjectBoardViewEnvelopeResponse)
 async def update_board_view_endpoint(
     view_id: str,
     request: UpdateBoardViewRequest,
@@ -730,7 +795,7 @@ async def update_board_view_endpoint(
         handle_api_exception(e, "Failed to update board view", logger)
 
 
-@router.delete("/views/{view_id}")
+@router.delete("/views/{view_id}", response_model=DeleteResponse)
 async def delete_board_view_endpoint(
     view_id: str,
     user_jwt: str = Depends(get_current_user_jwt),

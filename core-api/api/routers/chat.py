@@ -222,19 +222,13 @@ async def delete_conversation(
 
     # Verify ownership
     conv_check = await supabase.table("conversations")\
-        .select("id, workspace_id")\
+        .select("id")\
         .eq("id", conversation_id)\
         .eq("user_id", user['id'])\
         .execute()
 
     if not conv_check.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    conversation_workspace_id = conv_check.data[0].get("workspace_id")
-    effective_workspace_ids = body.workspace_ids or ([body.workspace_id] if body.workspace_id else None)
-    if conversation_workspace_id:
-        if effective_workspace_ids and any(ws_id != conversation_workspace_id for ws_id in effective_workspace_ids):
-            raise HTTPException(status_code=403, detail="Conversation is locked to its workspace")
-        effective_workspace_ids = [conversation_workspace_id]
 
     # Get all attachment R2 keys for this conversation (before cascade delete)
     attachments_result = await supabase.table("chat_attachments")\
@@ -326,13 +320,20 @@ async def send_message(
 
     # Verify ownership
     conv_check = await supabase.table("conversations")\
-        .select("id")\
+        .select("id, workspace_id")\
         .eq("id", conversation_id)\
         .eq("user_id", user['id'])\
         .execute()
 
     if not conv_check.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    conversation_workspace_id = conv_check.data[0].get("workspace_id")
+    # Resolve workspace_ids: prefer new array field, fall back to legacy single field
+    effective_workspace_ids = body.workspace_ids or ([body.workspace_id] if body.workspace_id else None)
+    if conversation_workspace_id:
+        if effective_workspace_ids and any(ws_id != conversation_workspace_id for ws_id in effective_workspace_ids):
+            raise HTTPException(status_code=403, detail="Conversation is locked to its workspace")
+        effective_workspace_ids = [conversation_workspace_id]
 
     # Fetch and validate attachments if provided
     attachments = []

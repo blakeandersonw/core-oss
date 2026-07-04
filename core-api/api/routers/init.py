@@ -66,12 +66,13 @@ async def get_init_data(
                 "channels_by_app": {},
                 "dms_by_app": {},
                 "unread_counts": {},
+                "onboarding_completed_at": onboarding_completed_at,
             }
 
         # Step 2: Fetch apps for all workspaces in parallel
         t_apps_start = time.perf_counter()
         app_results = await asyncio.gather(
-            *[get_workspace_apps(ws["id"], user_jwt) for ws in workspaces],
+            *[get_workspace_apps(ws["id"], user_jwt, user_id) for ws in workspaces],
             return_exceptions=True,
         )
         t_apps = time.perf_counter()

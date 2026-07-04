@@ -7,6 +7,7 @@ Uses async Supabase client for non-blocking I/O.
 from typing import Dict, Any, List, Optional
 import logging
 from lib.supabase_client import get_authenticated_async_client
+from api.super_admin import is_super_admin_user_id
 from api.services.users import get_users_by_ids
 
 logger = logging.getLogger(__name__)
@@ -403,6 +404,9 @@ async def get_user_workspace_role(
         Role string ('owner', 'admin', 'member') or None if not a member
     """
     try:
+        if await is_super_admin_user_id(user_id):
+            return "owner"
+
         supabase = await get_authenticated_async_client(user_jwt)
 
         result = await supabase.table("workspace_members")\

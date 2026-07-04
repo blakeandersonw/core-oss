@@ -115,6 +115,12 @@ class Settings(BaseSettings):
     microsoft_tenant_id: str = "common"  # "common" for multi-tenant + personal accounts
     microsoft_webhook_url: str = ""  # Webhook URL for Graph subscriptions (e.g., https://xxx.ngrok.app/api/webhooks/microsoft)
 
+    # Composio Connect Link settings (Google/Microsoft sign-in bridge)
+    composio_api_key: str = ""
+    composio_base_url: str = "https://backend.composio.dev/api/v3.1"
+    composio_google_auth_config_id: str = ""  # Gmail auth config ID
+    composio_microsoft_auth_config_id: str = ""  # Outlook auth config ID
+
     # Webhook URLs (set in production)
     webhook_base_url: str = ""  # Set to your deployed API URL (e.g., https://your-api.vercel.app)
     enable_webhook_routes: bool = True  # Disable on Vercel after ingress is cut over to Railway
@@ -236,6 +242,9 @@ class Settings(BaseSettings):
 
     # Environment
     api_env: str = "development"
+
+    # Global app admins. These users bypass workspace membership checks in the API.
+    super_admin_emails: str = ""
 
     @model_validator(mode="after")
     def validate_token_encryption_settings(self):

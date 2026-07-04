@@ -7,6 +7,7 @@ from typing import Optional
 from api.dependencies import get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
 from api.config import settings
+from api.super_admin import is_super_admin_email
 from lib.r2_client import get_r2_client
 from lib.supabase_client import get_service_role_client
 import logging
@@ -63,6 +64,7 @@ class UserProfileResponse(BaseModel):
     name: Optional[str] = None
     avatar_url: Optional[str] = None
     onboarding_completed_at: Optional[str] = None
+    is_super_admin: bool = False
 
 
 @router.get("/me", response_model=UserProfileResponse)
@@ -83,7 +85,9 @@ async def get_current_user_profile(
                 detail="User not found"
             )
 
-        return result.data
+        profile = result.data
+        profile["is_super_admin"] = is_super_admin_email(profile.get("email"))
+        return profile
     except HTTPException:
         raise
     except Exception as e:

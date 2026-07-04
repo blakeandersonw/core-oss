@@ -71,6 +71,8 @@ async function handleTerminalAuthFailure(): Promise<void> {
       userProfile: null,
       isAuthenticated: false,
       onboardingCompletedAt: undefined,
+      profileStatus: 'idle',
+      profileError: null,
       isLoading: false,
     });
   }
@@ -175,6 +177,7 @@ export interface Workspace {
   updated_at: string;
   role?: string; // User's role in this workspace
   is_shared?: boolean; // Shared workspace flag
+  is_super_admin_access?: boolean; // Workspace is visible through global admin access
   emoji?: string; // Emoji icon for workspace
   icon_r2_key?: string; // R2 key for workspace icon (stored in DB)
   icon_url?: string; // Generated signed proxy URL (from API response)

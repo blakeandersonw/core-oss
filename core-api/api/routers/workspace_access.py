@@ -61,7 +61,125 @@ class McpExecuteRequest(BaseModel):
     arguments: Dict[str, Any] = Field(default_factory=dict)
 
 
-@router.get("/api/workspaces/{workspace_id}/client-contacts")
+class ClientContactResponse(BaseModel):
+    id: str
+    workspace_id: str
+    kind: str
+    value: str
+    label: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class ClientContactListResponse(BaseModel):
+    contacts: List[ClientContactResponse]
+    count: int
+
+
+class ClientContactEnvelopeResponse(BaseModel):
+    contact: ClientContactResponse
+
+
+class WorkspaceConnectorResponse(BaseModel):
+    id: str
+    workspace_id: str
+    provider: str
+    display_name: Optional[str] = None
+    status: str
+    scopes: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class WorkspaceConnectorListResponse(BaseModel):
+    connectors: List[WorkspaceConnectorResponse]
+    count: int
+
+
+class WorkspaceConnectorEnvelopeResponse(BaseModel):
+    connector: WorkspaceConnectorResponse
+
+
+class ApiKeyResponse(BaseModel):
+    id: str
+    workspace_id: str
+    name: str
+    key_prefix: str
+    key: Optional[str] = None
+    scopes: List[str] = Field(default_factory=list)
+    last_used_at: Optional[str] = None
+    revoked_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    created_at: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class ApiKeyListResponse(BaseModel):
+    api_keys: List[ApiKeyResponse]
+    count: int
+
+
+class ApiKeyEnvelopeResponse(BaseModel):
+    api_key: ApiKeyResponse
+
+
+class WorkspaceWebhookResponse(BaseModel):
+    id: str
+    workspace_id: str
+    name: str
+    url: str
+    events: List[str] = Field(default_factory=list)
+    secret: Optional[str] = None
+    is_active: bool = True
+    last_delivery_at: Optional[str] = None
+    created_at: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class WorkspaceWebhookListResponse(BaseModel):
+    webhooks: List[WorkspaceWebhookResponse]
+    count: int
+
+
+class WorkspaceWebhookEnvelopeResponse(BaseModel):
+    webhook: WorkspaceWebhookResponse
+
+
+class DeleteResponse(BaseModel):
+    status: str
+    id: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class McpManifestResponse(BaseModel):
+    workspace_id: str
+    tools: List[Dict[str, Any]] = Field(default_factory=list)
+
+    class Config:
+        extra = "allow"
+
+
+class McpExecuteResponse(BaseModel):
+    result: Any = None
+
+    class Config:
+        extra = "allow"
+
+
+@router.get("/api/workspaces/{workspace_id}/client-contacts", response_model=ClientContactListResponse)
 async def list_client_contacts_endpoint(
     workspace_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
@@ -70,7 +188,7 @@ async def list_client_contacts_endpoint(
     return {"contacts": contacts, "count": len(contacts)}
 
 
-@router.post("/api/workspaces/{workspace_id}/client-contacts", status_code=201)
+@router.post("/api/workspaces/{workspace_id}/client-contacts", response_model=ClientContactEnvelopeResponse, status_code=201)
 async def create_client_contact_endpoint(
     workspace_id: str,
     request: ClientContactRequest,
@@ -88,7 +206,7 @@ async def create_client_contact_endpoint(
     return {"contact": contact}
 
 
-@router.delete("/api/workspaces/{workspace_id}/client-contacts/{contact_id}")
+@router.delete("/api/workspaces/{workspace_id}/client-contacts/{contact_id}", response_model=DeleteResponse)
 async def delete_client_contact_endpoint(
     workspace_id: str,
     contact_id: str,
@@ -97,7 +215,7 @@ async def delete_client_contact_endpoint(
     return await delete_client_contact(user_jwt, workspace_id, contact_id)
 
 
-@router.get("/api/workspaces/{workspace_id}/connectors")
+@router.get("/api/workspaces/{workspace_id}/connectors", response_model=WorkspaceConnectorListResponse)
 async def list_workspace_connectors_endpoint(
     workspace_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
@@ -106,7 +224,7 @@ async def list_workspace_connectors_endpoint(
     return {"connectors": connectors, "count": len(connectors)}
 
 
-@router.post("/api/workspaces/{workspace_id}/connectors", status_code=201)
+@router.post("/api/workspaces/{workspace_id}/connectors", response_model=WorkspaceConnectorEnvelopeResponse, status_code=201)
 async def upsert_workspace_connector_endpoint(
     workspace_id: str,
     request: WorkspaceConnectorRequest,
@@ -126,7 +244,7 @@ async def upsert_workspace_connector_endpoint(
     return {"connector": connector}
 
 
-@router.delete("/api/workspaces/{workspace_id}/connectors/{connector_id}")
+@router.delete("/api/workspaces/{workspace_id}/connectors/{connector_id}", response_model=DeleteResponse)
 async def delete_workspace_connector_endpoint(
     workspace_id: str,
     connector_id: str,
@@ -135,7 +253,7 @@ async def delete_workspace_connector_endpoint(
     return await delete_workspace_connector(user_jwt, workspace_id, connector_id)
 
 
-@router.get("/api/workspaces/{workspace_id}/api-keys")
+@router.get("/api/workspaces/{workspace_id}/api-keys", response_model=ApiKeyListResponse)
 async def list_api_keys_endpoint(
     workspace_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
@@ -144,7 +262,7 @@ async def list_api_keys_endpoint(
     return {"api_keys": keys, "count": len(keys)}
 
 
-@router.post("/api/workspaces/{workspace_id}/api-keys", status_code=201)
+@router.post("/api/workspaces/{workspace_id}/api-keys", response_model=ApiKeyEnvelopeResponse, status_code=201)
 async def create_api_key_endpoint(
     workspace_id: str,
     request: ApiKeyCreateRequest,
@@ -162,7 +280,7 @@ async def create_api_key_endpoint(
     return {"api_key": api_key}
 
 
-@router.post("/api/workspaces/{workspace_id}/api-keys/{api_key_id}/revoke")
+@router.post("/api/workspaces/{workspace_id}/api-keys/{api_key_id}/revoke", response_model=DeleteResponse)
 async def revoke_api_key_endpoint(
     workspace_id: str,
     api_key_id: str,
@@ -171,7 +289,7 @@ async def revoke_api_key_endpoint(
     return await revoke_api_key(user_jwt, workspace_id, api_key_id)
 
 
-@router.get("/api/workspaces/{workspace_id}/webhooks")
+@router.get("/api/workspaces/{workspace_id}/webhooks", response_model=WorkspaceWebhookListResponse)
 async def list_webhooks_endpoint(
     workspace_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
@@ -180,7 +298,7 @@ async def list_webhooks_endpoint(
     return {"webhooks": webhooks, "count": len(webhooks)}
 
 
-@router.post("/api/workspaces/{workspace_id}/webhooks", status_code=201)
+@router.post("/api/workspaces/{workspace_id}/webhooks", response_model=WorkspaceWebhookEnvelopeResponse, status_code=201)
 async def create_webhook_endpoint(
     workspace_id: str,
     request: WebhookCreateRequest,
@@ -198,7 +316,7 @@ async def create_webhook_endpoint(
     return {"webhook": webhook}
 
 
-@router.delete("/api/workspaces/{workspace_id}/webhooks/{webhook_id}")
+@router.delete("/api/workspaces/{workspace_id}/webhooks/{webhook_id}", response_model=DeleteResponse)
 async def delete_webhook_endpoint(
     workspace_id: str,
     webhook_id: str,
@@ -207,7 +325,7 @@ async def delete_webhook_endpoint(
     return await delete_webhook_subscription(user_jwt, workspace_id, webhook_id)
 
 
-@router.get("/api/workspaces/{workspace_id}/mcp/manifest")
+@router.get("/api/workspaces/{workspace_id}/mcp/manifest", response_model=McpManifestResponse)
 async def user_mcp_manifest_endpoint(
     workspace_id: str,
     user_jwt: str = Depends(get_current_user_jwt),
@@ -231,7 +349,7 @@ async def _api_key_record(
     return await verify_workspace_api_key(x_workspace_api_key, workspace_id)
 
 
-@router.get("/api/mcp/workspaces/{workspace_id}/manifest")
+@router.get("/api/mcp/workspaces/{workspace_id}/manifest", response_model=McpManifestResponse)
 async def external_mcp_manifest_endpoint(
     workspace_id: str,
     api_key_record: Dict[str, Any] = Depends(_api_key_record),
@@ -239,7 +357,7 @@ async def external_mcp_manifest_endpoint(
     return await workspace_mcp_manifest(workspace_id, api_key_record.get("scopes") or [])
 
 
-@router.post("/api/mcp/workspaces/{workspace_id}/execute")
+@router.post("/api/mcp/workspaces/{workspace_id}/execute", response_model=McpExecuteResponse)
 async def external_mcp_execute_endpoint(
     workspace_id: str,
     request: McpExecuteRequest,

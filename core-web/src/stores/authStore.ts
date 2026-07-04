@@ -12,7 +12,10 @@ export interface UserProfile {
   name?: string;
   avatar_url?: string;
   onboarding_completed_at?: string | null;
+  is_super_admin?: boolean;
 }
+
+export type ProfileStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 interface AuthState {
   user: User | null;
@@ -20,6 +23,8 @@ interface AuthState {
   userProfile: UserProfile | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  profileStatus: ProfileStatus;
+  profileError: string | null;
   // undefined = not yet loaded (wait), null = loaded + not completed, string = completed
   onboardingCompletedAt: string | null | undefined;
 
@@ -43,6 +48,7 @@ const inFlightOAuthPayloadKeys = new Set<string>();
 
 type SupabaseOAuthProvider = 'google' | 'azure';
 type BackendOAuthProvider = 'google' | 'microsoft';
+type ComposioLoginProvider = 'google' | 'microsoft';
 
 const BACKEND_PROVIDER_MAP: Record<SupabaseOAuthProvider, BackendOAuthProvider> = {
   google: 'google',
@@ -77,6 +83,21 @@ const COMPLETE_OAUTH_SCOPES: Record<BackendOAuthProvider, string[]> = {
   google: GOOGLE_OAUTH_SCOPES,
   microsoft: MICROSOFT_OAUTH_SCOPES,
 };
+
+class OAuthStartError extends Error {
+  status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'OAuthStartError';
+    this.status = status;
+  }
+}
+
+function shouldFallbackToSupabaseOAuth(error: unknown): boolean {
+  if (!(error instanceof OAuthStartError)) return false;
+  return error.status === 404 || error.status === 501;
+}
 
 function isSupabaseOAuthProvider(value: unknown): value is SupabaseOAuthProvider {
   return value === 'google' || value === 'azure';
@@ -128,6 +149,60 @@ function getProviderUserId(user: User, provider: SupabaseOAuthProvider): string 
   ];
 
   return candidates.find((value): value is string => Boolean(value)) ?? user.id;
+}
+
+async function startComposioLogin(provider: ComposioLoginProvider, redirectTo?: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/auth/composio/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider,
+      redirect_to: redirectTo || window.location.href,
+    }),
+  });
+
+  if (!response.ok) {
+    let message = `Failed to start ${provider} sign-in`;
+    try {
+      const errorData = (await response.json()) as { detail?: unknown; message?: unknown };
+      if (typeof errorData.detail === 'string') {
+        message = errorData.detail;
+      } else if (typeof errorData.message === 'string') {
+        message = errorData.message;
+      }
+    } catch {
+      // Keep default message.
+    }
+    throw new OAuthStartError(message, response.status);
+  }
+
+  const data = (await response.json()) as { redirect_url?: unknown };
+  if (typeof data.redirect_url !== 'string' || !data.redirect_url) {
+    throw new Error('Composio did not return a sign-in URL');
+  }
+
+  window.location.assign(data.redirect_url);
+}
+
+async function startSupabaseOAuthLogin(provider: SupabaseOAuthProvider, redirectTo?: string): Promise<void> {
+  const isGoogle = provider === 'google';
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo: redirectTo || window.location.origin,
+      scopes: (isGoogle ? GOOGLE_OAUTH_SCOPES : MICROSOFT_FULL_SCOPES).join(' '),
+      ...(isGoogle
+        ? {
+            queryParams: {
+              access_type: 'offline',
+              prompt: 'consent',
+            },
+          }
+        : {}),
+    },
+  });
+
+  if (error) throw error;
 }
 
 async function completeOAuthConnection(session: Session): Promise<void> {
@@ -212,11 +287,13 @@ export const useAuthStore = create<AuthState>()(
       userProfile: null,
       isLoading: true,
       isAuthenticated: false,
+      profileStatus: 'idle',
+      profileError: null,
       onboardingCompletedAt: undefined,
 
       initialize: async () => {
         if (!isSupabaseConfigured()) {
-          set({ isLoading: false });
+          set({ isLoading: false, profileStatus: 'idle', profileError: null });
           return;
         }
 
@@ -226,7 +303,7 @@ export const useAuthStore = create<AuthState>()(
 
           if (error) {
             console.error('Auth initialization error:', error);
-            set({ isLoading: false });
+            set({ isLoading: false, profileStatus: 'error', profileError: error.message });
             return;
           }
 
@@ -234,14 +311,17 @@ export const useAuthStore = create<AuthState>()(
             user: session?.user ?? null,
             session: session ?? null,
             isAuthenticated: !!session,
-            isLoading: false,
+            profileStatus: session ? 'loading' : 'idle',
+            profileError: null,
           });
 
           // Fetch user profile if authenticated
           if (session) {
-            get().fetchUserProfile();
+            await get().fetchUserProfile();
             void completeOAuthConnection(session);
           }
+
+          set({ isLoading: false });
 
           // Listen for auth changes
           supabase.auth.onAuthStateChange((event, session) => {
@@ -249,6 +329,9 @@ export const useAuthStore = create<AuthState>()(
               user: session?.user ?? null,
               session,
               isAuthenticated: !!session,
+              profileStatus: session ? 'loading' : 'idle',
+              profileError: null,
+              ...(session ? {} : { userProfile: null, onboardingCompletedAt: undefined }),
             });
             // Fetch profile on auth change
             if (session) {
@@ -257,12 +340,16 @@ export const useAuthStore = create<AuthState>()(
                 void completeOAuthConnection(session);
               }
             } else {
-              set({ userProfile: null });
+              set({ userProfile: null, profileStatus: 'idle', profileError: null });
             }
           });
         } catch (err) {
           console.error('Auth initialization error:', err);
-          set({ isLoading: false });
+          set({
+            isLoading: false,
+            profileStatus: 'error',
+            profileError: err instanceof Error ? err.message : 'Failed to initialize authentication',
+          });
         }
       },
 
@@ -278,7 +365,10 @@ export const useAuthStore = create<AuthState>()(
           user: data.user,
           session: data.session,
           isAuthenticated: true,
+          profileStatus: 'loading',
+          profileError: null,
         });
+        await get().fetchUserProfile();
         trackEvent('signed_in', { method: 'email' });
       },
 
@@ -286,36 +376,26 @@ export const useAuthStore = create<AuthState>()(
         const redirectTo = typeof redirectToOrEvent === 'string'
           ? redirectToOrEvent
           : undefined;
-        const { error } = await supabase.auth.signInWithOAuth({
-          provider: 'google',
-          options: {
-            redirectTo: redirectTo || window.location.origin,
-            scopes: GOOGLE_OAUTH_SCOPES.join(' '),
-            queryParams: {
-              access_type: 'offline',
-              prompt: 'consent',
-            },
-          },
-        });
-
-        if (error) throw error;
-        trackEvent('signed_in', { method: 'google' });
+        trackEvent('sign_in_started', { method: 'google' });
+        try {
+          await startComposioLogin('google', redirectTo);
+        } catch (error) {
+          if (!shouldFallbackToSupabaseOAuth(error)) throw error;
+          await startSupabaseOAuthLogin('google', redirectTo);
+        }
       },
 
       signInWithMicrosoft: async (redirectToOrEvent?: unknown) => {
         const redirectTo = typeof redirectToOrEvent === 'string'
           ? redirectToOrEvent
           : undefined;
-        const { error } = await supabase.auth.signInWithOAuth({
-          provider: 'azure',
-          options: {
-            redirectTo: redirectTo || window.location.origin,
-            scopes: MICROSOFT_FULL_SCOPES.join(' '),
-          },
-        });
-
-        if (error) throw error;
-        trackEvent('signed_in', { method: 'microsoft' });
+        trackEvent('sign_in_started', { method: 'microsoft' });
+        try {
+          await startComposioLogin('microsoft', redirectTo);
+        } catch (error) {
+          if (!shouldFallbackToSupabaseOAuth(error)) throw error;
+          await startSupabaseOAuthLogin('azure', redirectTo);
+        }
       },
 
       signUpWithEmail: async (email, password) => {
@@ -330,7 +410,12 @@ export const useAuthStore = create<AuthState>()(
           user: data.user,
           session: data.session,
           isAuthenticated: !!data.session,
+          profileStatus: data.session ? 'loading' : 'idle',
+          profileError: null,
         });
+        if (data.session) {
+          await get().fetchUserProfile();
+        }
         trackEvent('signed_up', { method: 'email' });
       },
 
@@ -342,6 +427,8 @@ export const useAuthStore = create<AuthState>()(
           session: null,
           userProfile: null,
           isAuthenticated: false,
+          profileStatus: 'idle',
+          profileError: null,
           onboardingCompletedAt: undefined,
         });
       },
@@ -354,7 +441,12 @@ export const useAuthStore = create<AuthState>()(
         if (fetchProfilePromise) return fetchProfilePromise;
 
         const token = get().session?.access_token;
-        if (!token) return;
+        if (!token) {
+          set({ profileStatus: 'idle', profileError: null });
+          return;
+        }
+
+        set({ profileStatus: 'loading', profileError: null });
 
         fetchProfilePromise = (async () => {
           try {
@@ -364,15 +456,55 @@ export const useAuthStore = create<AuthState>()(
                 Authorization: `Bearer ${token}`,
               },
             });
+
             if (response.ok) {
-              const profile = await response.json();
+              const profile = (await response.json()) as UserProfile;
               set({
                 userProfile: profile,
                 onboardingCompletedAt: profile.onboarding_completed_at ?? null,
+                profileStatus: 'ready',
+                profileError: null,
               });
+              return;
             }
+
+            if (response.status === 404) {
+              set({
+                userProfile: null,
+                onboardingCompletedAt: null,
+                profileStatus: 'ready',
+                profileError: null,
+              });
+              return;
+            }
+
+            if (response.status === 401) {
+              await get().signOut();
+              return;
+            }
+
+            let errorMessage = `Failed to load user profile (${response.status})`;
+            try {
+              const errorData = (await response.json()) as { detail?: unknown; message?: unknown };
+              if (typeof errorData.detail === 'string') {
+                errorMessage = errorData.detail;
+              } else if (typeof errorData.message === 'string') {
+                errorMessage = errorData.message;
+              }
+            } catch {
+              // Keep status-based message.
+            }
+
+            set({
+              profileStatus: 'error',
+              profileError: errorMessage,
+            });
           } catch (err) {
             console.error('Failed to fetch user profile:', err);
+            set({
+              profileStatus: 'error',
+              profileError: err instanceof Error ? err.message : 'Failed to load user profile',
+            });
           } finally {
             fetchProfilePromise = null;
           }

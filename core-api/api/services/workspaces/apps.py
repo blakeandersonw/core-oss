@@ -6,7 +6,8 @@ Uses async Supabase client for non-blocking I/O.
 """
 from typing import Dict, Any, List, Optional
 import logging
-from lib.supabase_client import get_authenticated_async_client
+from api.super_admin import is_super_admin_user_id
+from lib.supabase_client import get_authenticated_async_client, get_async_service_role_client
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,8 @@ VALID_APP_TYPES = (
 
 async def get_workspace_apps(
     workspace_id: str,
-    user_jwt: str
+    user_jwt: str,
+    user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Get all apps in a workspace.
@@ -39,7 +41,11 @@ async def get_workspace_apps(
         List of apps with access info
     """
     try:
-        supabase = await get_authenticated_async_client(user_jwt)
+        supabase = (
+            await get_async_service_role_client()
+            if user_id and await is_super_admin_user_id(user_id)
+            else await get_authenticated_async_client(user_jwt)
+        )
 
         result = await supabase.table("workspace_apps")\
             .select("id, workspace_id, app_type, is_public, position, config, created_at")\

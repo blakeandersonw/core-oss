@@ -54,12 +54,16 @@ function SignInModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   const { signInWithGoogle, signInWithMicrosoft } = useAuthStore();
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const hasTurnstile = !!TURNSTILE_SITE_KEY;
 
   // Reset token when modal closes
   useEffect(() => {
-    if (!isOpen) setTurnstileToken(null);
+    if (!isOpen) {
+      setTurnstileToken(null);
+      setAuthError(null);
+    }
   }, [isOpen]);
 
   useEffect(() => {
@@ -73,6 +77,7 @@ function SignInModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   }, [isOpen, onClose]);
 
   const handleSignIn = useCallback(async (provider: "google" | "microsoft") => {
+    setAuthError(null);
     if (hasTurnstile) {
       if (!turnstileToken) return;
       setVerifying(true);
@@ -93,8 +98,12 @@ function SignInModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
         setVerifying(false);
       }
     }
-    if (provider === "google") signInWithGoogle();
-    else signInWithMicrosoft();
+    try {
+      if (provider === "google") await signInWithGoogle();
+      else await signInWithMicrosoft();
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Sign-in failed");
+    }
   }, [hasTurnstile, turnstileToken, signInWithGoogle, signInWithMicrosoft]);
 
   const buttonsDisabled = hasTurnstile && (!turnstileToken || verifying);
@@ -145,6 +154,11 @@ function SignInModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
                 Continue with Microsoft
               </button>
             </div>
+            {authError && (
+              <p className="mt-3 text-sm text-red-600">
+                {authError}
+              </p>
+            )}
             {hasTurnstile && (
               <div className="mt-4 flex justify-center">
                 <Turnstile

@@ -79,7 +79,7 @@ def test_get_init_data_success_returns_batched_payload(client, monkeypatch):
     monkeypatch.setattr(
         init_router,
         "get_workspace_apps",
-        AsyncMock(side_effect=lambda ws_id, _jwt: apps_by_workspace[ws_id]),
+        AsyncMock(side_effect=lambda ws_id, _jwt, _user_id: apps_by_workspace[ws_id]),
     )
     monkeypatch.setattr(
         init_router,
@@ -144,6 +144,7 @@ def test_get_init_data_recovers_default_workspace(client, monkeypatch):
 
     get_workspaces_mock.assert_awaited_once_with(TEST_USER_ID, TEST_USER_JWT)
     get_default_workspace_mock.assert_awaited_once_with(TEST_USER_ID, TEST_USER_JWT)
+    get_workspace_apps_mock.assert_awaited_once_with("ws-default", TEST_USER_JWT, TEST_USER_ID)
 
 
 def test_get_init_data_returns_empty_when_no_workspaces_exist(client, monkeypatch):
@@ -168,6 +169,7 @@ def test_get_init_data_returns_empty_when_no_workspaces_exist(client, monkeypatc
         "channels_by_app": {},
         "dms_by_app": {},
         "unread_counts": {},
+        "onboarding_completed_at": None,
     }
     get_workspace_apps_mock.assert_not_awaited()
 
@@ -180,7 +182,7 @@ def test_get_init_data_tolerates_workspace_app_fetch_failure(client, monkeypatch
         {"id": "ws-good", "name": "Good WS", "is_default": True},
     ]
 
-    async def get_apps_side_effect(workspace_id: str, _jwt: str):
+    async def get_apps_side_effect(workspace_id: str, _jwt: str, _user_id: str):
         if workspace_id == "ws-bad":
             raise RuntimeError("apps query failed")
         return [
