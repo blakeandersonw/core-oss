@@ -5,6 +5,8 @@ import { useAuthStore } from '../../stores/authStore';
 import { useEmailAccountsStore } from '../../stores/emailAccountsStore';
 import Modal from '../Modal/Modal';
 import { uploadAvatar, deleteAvatar } from '../../api/client';
+import { ConnectionsList } from '../Connections/ConnectionsList';
+import { emailAccountToConnection } from '../Connections/types';
 
 interface SettingsViewProps {
   isOpen: boolean;
@@ -56,8 +58,12 @@ export default function SettingsView({ isOpen, onClose }: SettingsViewProps) {
     accounts: emailAccounts,
     isLoading: accountsLoading,
     isAdding: accountAdding,
+    isVerifying: accountsVerifying,
     error: accountsError,
     fetchAccounts,
+    verifyAccounts,
+    verifyAccount,
+    reconnectAccount,
     addGoogleAccount,
     addMicrosoftAccount,
     removeAccount,
@@ -127,6 +133,12 @@ export default function SettingsView({ isOpen, onClose }: SettingsViewProps) {
       fetchAccounts();
     }
   }, [isAuthenticated, fetchAccounts]);
+
+  useEffect(() => {
+    if (isAuthenticated && isOpen) {
+      void verifyAccounts();
+    }
+  }, [isAuthenticated, isOpen, verifyAccounts]);
 
   const handleAddProvider = async (provider: 'google' | 'microsoft') => {
     setShowProviderPicker(false);
@@ -358,75 +370,18 @@ export default function SettingsView({ isOpen, onClose }: SettingsViewProps) {
               </h2>
             </div>
 
-            {accountsError && (
-              <div className="p-3 mb-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400">
-                {accountsError}
-              </div>
-            )}
-
-            {accountsLoading ? (
-              <p className="text-sm text-text-secondary">Loading accounts...</p>
-            ) : emailAccounts.length === 0 ? (
-              <p className="text-sm text-text-secondary mb-3">No email accounts connected yet.</p>
-            ) : (
-              <div className="space-y-6 mb-4"> {/* Increased vertical spacing: space-y-6 mb-6 */}
-                {emailAccounts.map((account) => (
-                  <div
-                    key={account.id}
-                    className="group flex items-center justify-between" // Added vertical padding for extra spacing
-                  >
-                    <div className="flex items-center gap-4 min-w-0"> {/* Increased horizontal gap */}
-                      {/* Avatar */}
-                      {account.provider_avatar ? (
-                        <img
-                          src={account.provider_avatar}
-                          alt=""
-                          className="w-8 h-8 rounded-full object-cover shrink-0"
-                        />
-                      ) : (
-                        <div
-                          className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0"
-                          style={{ background: account.provider === 'google' ? '#4285F4' : '#00a4ef' }}
-                        >
-                          {(account.provider_name || account.provider_email).charAt(0).toUpperCase()}
-                        </div>
-                      )}
-
-                      {/* Info */}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm text-text-body truncate">
-                            {account.provider_name || account.provider_email}
-                          </p>
-                          {/* Provider badge */}
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-gray-dark text-text-secondary shrink-0">
-                            {account.provider === 'google' ? 'Google' : 'Microsoft'}
-                          </span>
-                          {account.is_primary && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 shrink-0">
-                              Primary
-                            </span>
-                          )}
-                        </div>
-                        {account.provider_name && (
-                          <p className="text-xs text-text-secondary truncate">{account.provider_email}</p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Remove button (not for primary) */}
-                    {!account.is_primary && (
-                      <button
-                        onClick={() => setConfirmRemoveId(account.id)}
-                        className="px-3 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors shrink-0 ml-2 opacity-0 group-hover:opacity-100"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            <ConnectionsList
+              title="Email accounts"
+              connections={emailAccounts.map(emailAccountToConnection)}
+              isLoading={accountsLoading}
+              isVerifying={accountsVerifying}
+              error={accountsError}
+              emptyMessage="No email accounts connected yet."
+              onVerifyAll={() => void verifyAccounts(true)}
+              onVerify={(id) => void verifyAccount(id)}
+              onReconnect={(id) => void reconnectAccount(id)}
+              onDisconnect={(id) => setConfirmRemoveId(id)}
+            />
 
             {/* Add account button */}
             {emailAccounts.length < 5 && (

@@ -13,8 +13,10 @@ import { Toaster, toast } from "sonner";
 import { queryClient, getQueryPersister } from "./lib/queryClient";
 import { resolvePostSignupInvitations } from "./api/client";
 import { useAuthStore } from "./stores/authStore";
+import { useEmailAccountsStore } from "./stores/emailAccountsStore";
 import { useNotificationStore } from "./stores/notificationStore";
 import { useWorkspaceStore } from "./stores/workspaceStore";
+import { useWorkspaceConnectorsStore } from "./stores/workspaceConnectorsStore";
 import { useProductStore } from "./stores/productStore";
 import { KeyboardNavigationProvider } from "./hooks/useKeyboardNavigation";
 import { useGlobalRealtime } from "./hooks/useGlobalRealtime";
@@ -50,6 +52,9 @@ const OnboardingWizard = lazy(() => import("./components/Onboarding/OnboardingWi
 const PENDING_INVITE_TOKEN_KEY = "pending_invite_token";
 const PENDING_INVITE_TOKEN_SET_AT_KEY = "pending_invite_token_set_at";
 const PENDING_INVITE_TOKEN_MAX_AGE_MS = 60 * 60 * 1000;
+const COMPLETED_EMAIL_RECONNECT_ID_KEY = "completed_email_account_reconnect_id";
+const COMPLETED_WORKSPACE_RECONNECT_ID_KEY = "completed_workspace_connector_reconnect_id";
+const COMPLETED_WORKSPACE_RECONNECT_WORKSPACE_ID_KEY = "completed_workspace_connector_reconnect_workspace_id";
 
 const consumePendingInviteToken = (): string | null => {
   try {
@@ -67,6 +72,30 @@ const consumePendingInviteToken = (): string | null => {
     return token;
   } catch {
     return null;
+  }
+};
+
+const consumeCompletedReconnect = (): {
+  emailAccountId: string | null;
+  workspaceId: string | null;
+  workspaceConnectorId: string | null;
+} => {
+  try {
+    const emailAccountId = sessionStorage.getItem(COMPLETED_EMAIL_RECONNECT_ID_KEY);
+    const workspaceId = sessionStorage.getItem(COMPLETED_WORKSPACE_RECONNECT_WORKSPACE_ID_KEY);
+    const workspaceConnectorId = sessionStorage.getItem(COMPLETED_WORKSPACE_RECONNECT_ID_KEY);
+
+    sessionStorage.removeItem(COMPLETED_EMAIL_RECONNECT_ID_KEY);
+    sessionStorage.removeItem(COMPLETED_WORKSPACE_RECONNECT_WORKSPACE_ID_KEY);
+    sessionStorage.removeItem(COMPLETED_WORKSPACE_RECONNECT_ID_KEY);
+
+    return {
+      emailAccountId: emailAccountId?.trim() || null,
+      workspaceId: workspaceId?.trim() || null,
+      workspaceConnectorId: workspaceConnectorId?.trim() || null,
+    };
+  } catch {
+    return { emailAccountId: null, workspaceId: null, workspaceConnectorId: null };
   }
 };
 
@@ -277,6 +306,32 @@ function AppContent() {
     inviteRedirectInProgressRef.current = true;
     void navigate(`/invite/${encodeURIComponent(pendingToken)}`, { replace: true });
   }, [isAuthenticated, authLoading, isInviteRoute, isShareLinkRoute, navigate]);
+
+  useEffect(() => {
+    if (!isAuthenticated || authLoading) return;
+    if (isInviteRoute || isShareLinkRoute) return;
+
+    const { emailAccountId, workspaceId, workspaceConnectorId } = consumeCompletedReconnect();
+    if (emailAccountId) {
+      const emailAccountsStore = useEmailAccountsStore.getState();
+      void emailAccountsStore.fetchAccounts()
+        .then(() => emailAccountsStore.verifyAccount(emailAccountId))
+        .then(() => toast.success("Connection reconnected"))
+        .catch((err) => {
+          toast.error(err instanceof Error ? err.message : "Failed to verify reconnected account");
+        });
+    }
+
+    if (workspaceId && workspaceConnectorId) {
+      const workspaceConnectorsStore = useWorkspaceConnectorsStore.getState();
+      void workspaceConnectorsStore.fetch(workspaceId)
+        .then(() => workspaceConnectorsStore.verify(workspaceId, workspaceConnectorId))
+        .then(() => toast.success("Connector reconnected"))
+        .catch((err) => {
+          toast.error(err instanceof Error ? err.message : "Failed to verify reconnected connector");
+        });
+    }
+  }, [isAuthenticated, authLoading, isInviteRoute, isShareLinkRoute, location.key]);
 
   useEffect(() => {
     if (isInviteRoute) {

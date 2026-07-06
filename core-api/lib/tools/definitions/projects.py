@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from lib.tools.base import ToolCategory, ToolContext, ToolResult, error, success
 from lib.tools.registry import tool
@@ -45,7 +45,7 @@ def _truncate_text(value: str, limit: int = _DESCRIPTION_PREVIEW_LEN) -> str:
     return value[: limit - 3].rstrip() + "..."
 
 
-def _format_reference(board_key: str | None, issue_number: Any) -> str | None:
+def _format_reference(board_key: Optional[str], issue_number: Any) -> Optional[str]:
     """Build a user-facing issue reference like CORE-12 when possible."""
     if issue_number is None:
         return None
@@ -80,7 +80,7 @@ async def _get_member_map(workspace_id: str, user_jwt: str) -> Dict[str, Dict[st
     }
 
 
-def _simplify_labels(labels: List[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
+def _simplify_labels(labels: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """Return compact label objects for LLM consumption."""
     return [
         {
@@ -93,7 +93,7 @@ def _simplify_labels(labels: List[Dict[str, Any]] | None) -> List[Dict[str, Any]
 
 
 def _simplify_assignees(
-    assignees: List[Dict[str, Any]] | None,
+    assignees: Optional[List[Dict[str, Any]]],
     member_map: Dict[str, Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Attach names and emails to issue assignees when available."""
@@ -116,7 +116,7 @@ def _format_issue_summary(
     issue: Dict[str, Any],
     state_lookup: Dict[str, Dict[str, Any]],
     member_map: Dict[str, Dict[str, Any]],
-    board_key: str | None,
+    board_key: Optional[str],
 ) -> Dict[str, Any]:
     """Create a compact issue summary for board-level reads."""
     state = state_lookup.get(issue.get("state_id"), {})

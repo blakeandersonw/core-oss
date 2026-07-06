@@ -10,12 +10,22 @@ from api.services.auth import AuthService
 from api.services.composio import (
     create_connect_link,
     get_connected_account_profile,
+    get_connected_account_status,
     make_login_composio_user_id,
     normalize_redirect_to,
+    refresh_connected_account,
+    revoke_connected_account,
     resolve_frontend_origin,
     sign_login_state,
     validate_provider,
     verify_login_state,
+)
+from api.services.connections.hardening import (
+    ConnectionHealth,
+    ext_connection_update_payload,
+    health_from_failed_check,
+    health_from_legacy_ext_connection,
+    verify_composio_backed_connection,
 )
 from api.services.workspaces.invitations import resolve_post_signup_pending_invitations
 from api.dependencies import get_current_user_email, get_current_user_jwt, get_current_user_id
@@ -138,13 +148,76 @@ def _read_nested_field(value: Any, *fields: str) -> Any:
     return current
 
 
+def _select_ext_connection(service_supabase: Any, connection_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+    result = service_supabase.table("ext_connections")\
+        .select("*")\
+        .eq("id", connection_id)\
+        .eq("user_id", user_id)\
+        .maybe_single()\
+        .execute()
+    return result.data
+
+
+async def _verify_and_persist_ext_connection(
+    service_supabase: Any,
+    row: Dict[str, Any],
+) -> ConnectionHealth:
+    connection_id = str(row["id"])
+    external_account_id = row.get("external_account_id")
+    try:
+        if external_account_id:
+            health = await verify_composio_backed_connection(str(external_account_id))
+        else:
+            health = health_from_legacy_ext_connection(row)
+        service_supabase.table("ext_connections")\
+            .update(ext_connection_update_payload(health))\
+            .eq("id", connection_id)\
+            .execute()
+        return health
+    except HTTPException as exc:
+        if exc.status_code not in {
+            status.HTTP_501_NOT_IMPLEMENTED,
+            status.HTTP_502_BAD_GATEWAY,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        }:
+            raise
+        return health_from_failed_check(row, table="ext_connections", error=exc.detail)
+    except Exception as exc:
+        return health_from_failed_check(row, table="ext_connections", error=exc)
+
+
+async def _best_effort_revoke_ext_connection_source(
+    service_supabase: Any,
+    connection_id: str,
+    user_id: str,
+) -> None:
+    row = _select_ext_connection(service_supabase, connection_id, user_id)
+    external_account_id = (row or {}).get("external_account_id")
+    if not external_account_id:
+        return
+    try:
+        await revoke_connected_account(str(external_account_id), hard=True)
+        service_supabase.table("ext_connections")\
+            .update({"revoked_at": datetime_now_iso()})\
+            .eq("id", connection_id)\
+            .execute()
+    except Exception as exc:
+        logger.warning("Composio revoke failed for connection %s: %s", connection_id, exc)
+
+
+def datetime_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _ensure_auth_user_and_magic_token(
     *,
     email: str,
     name: Optional[str],
     avatar_url: Optional[str],
     provider: str,
-) -> str:
+) -> Dict[str, str]:
     service_supabase = get_service_role_client()
     user_metadata = {
         "name": name,
@@ -209,7 +282,7 @@ def _ensure_auth_user_and_magic_token(
             "avatar_url": avatar_url,
         }).execute()
 
-    return token_hash
+    return {"token_hash": token_hash, "user_id": user_id}
 
 
 @router.post("/composio/start", response_model=ComposioLoginStartResponse)
@@ -284,16 +357,58 @@ async def complete_composio_login(
         connected_account_id=body.connected_account_id,
     )
     email = str(profile["email"])
-    token_hash = _ensure_auth_user_and_magic_token(
+    session = _ensure_auth_user_and_magic_token(
         email=email,
         name=profile.get("name"),
         avatar_url=profile.get("avatar_url"),
         provider=provider,
     )
+    health_payload: Dict[str, Any] = {}
+    try:
+        health_payload = await get_connected_account_status(body.connected_account_id)
+    except Exception as exc:
+        logger.warning("Unable to read Composio status during login completion: %s", exc)
+
+    service_supabase = get_service_role_client()
+    provider_account_id = (
+        profile.get("provider_account_id")
+        or health_payload.get("external_account_id")
+    )
+    provider_user_id = str(provider_account_id or email)
+    scopes = list(health_payload.get("scopes") or [])
+    existing_primary = service_supabase.table("ext_connections")\
+        .select("id")\
+        .eq("user_id", session["user_id"])\
+        .eq("is_primary", True)\
+        .eq("is_active", True)\
+        .limit(1)\
+        .execute()
+    has_primary = bool(existing_primary.data)
+    connection_payload: Dict[str, Any] = {
+        "user_id": session["user_id"],
+        "provider": provider,
+        "provider_user_id": provider_user_id,
+        "provider_email": email,
+        "external_account_id": body.connected_account_id,
+        "verification_status": health_payload.get("status") or "connected",
+        "last_verified_at": datetime_now_iso(),
+        "scopes": scopes,
+        "is_active": True,
+        "is_primary": not has_primary,
+        "account_order": 0 if not has_primary else 1,
+        "metadata": {
+            "full_name": profile.get("name"),
+            "picture": profile.get("avatar_url"),
+            "composio_external_account_id": provider_account_id,
+        },
+    }
+    service_supabase.table("ext_connections")\
+        .upsert(connection_payload, on_conflict="user_id,provider,provider_user_id")\
+        .execute()
 
     return ComposioLoginCompleteResponse(
         email=email,
-        token_hash=token_hash,
+        token_hash=session["token_hash"],
         redirect_to=str(state_payload.get("redirect_to") or resolve_frontend_origin(request.headers.get("origin"))),
     )
 
@@ -452,6 +567,15 @@ class EmailAccountResponse(BaseModel):
     is_primary: bool
     account_order: int
     is_active: bool
+    verification_status: Optional[str] = "unknown"
+    last_verified_at: Optional[str] = None
+    error_reason: Optional[str] = None
+    scopes: List[str] = []
+    external_account_id: Optional[str] = None
+    unverified: bool = False
+
+    class Config:
+        extra = "allow"
 
 
 class EmailAccountsListResponse(BaseModel):
@@ -478,6 +602,33 @@ class AddEmailAccountRequest(BaseModel):
 class UpdateEmailAccountRequest(BaseModel):
     """Request model for updating account order"""
     account_order: int
+
+
+class ConnectionHealthResponse(BaseModel):
+    status: str
+    last_verified_at: Optional[str] = None
+    error_reason: Optional[str] = None
+    scopes: List[str] = []
+    external_account_id: Optional[str] = None
+    unverified: bool = False
+
+    class Config:
+        extra = "allow"
+
+
+class ReconnectResponse(BaseModel):
+    redirect_url: Optional[str] = None
+    status: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class CompleteReconnectRequest(BaseModel):
+    provider: str
+    state: str
+    status: Optional[str] = None
+    connected_account_id: Optional[str] = None
 
 
 @router.post("/users", response_model=UserCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -582,6 +733,12 @@ async def revoke_oauth_connection(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Connection not found or not owned by you"
             )
+
+        await _best_effort_revoke_ext_connection_source(
+            get_service_role_client(),
+            connection_id,
+            current_user_id,
+        )
 
         return {
             "message": "Connection revoked successfully"
@@ -724,6 +881,139 @@ async def list_email_accounts(
         handle_api_exception(e, "Failed to list email accounts", logger)
 
 
+@router.post("/email-accounts/verify", response_model=EmailAccountsListResponse)
+async def verify_email_accounts(
+    current_user_id: str = Depends(get_current_user_id),
+):
+    service_supabase = get_service_role_client()
+    result = service_supabase.table("ext_connections")\
+        .select("*")\
+        .eq("user_id", current_user_id)\
+        .in_("provider", ["google", "microsoft"])\
+        .execute()
+
+    accounts = []
+    for row in result.data or []:
+        health = await _verify_and_persist_ext_connection(service_supabase, row)
+        metadata = row.get("metadata") or {}
+        accounts.append({
+            "id": row["id"],
+            "provider": row.get("provider", "google"),
+            "provider_email": row.get("provider_email"),
+            "provider_name": metadata.get("full_name") or metadata.get("name"),
+            "provider_avatar": metadata.get("picture") or metadata.get("avatar_url"),
+            "is_primary": row.get("is_primary", False),
+            "account_order": row.get("account_order", 0),
+            "is_active": row.get("is_active", True),
+            "verification_status": health.status,
+            "last_verified_at": health.last_verified_at,
+            "error_reason": health.error_reason,
+            "scopes": health.scopes or row.get("scopes") or [],
+            "external_account_id": row.get("external_account_id"),
+            "unverified": health.unverified,
+        })
+    return {"accounts": sorted(accounts, key=lambda account: account.get("account_order") or 0)}
+
+
+@router.get("/email-accounts/{account_id}/health", response_model=ConnectionHealthResponse)
+async def get_email_account_health(
+    account_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    service_supabase = get_service_role_client()
+    row = _select_ext_connection(service_supabase, account_id, current_user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    return (await _verify_and_persist_ext_connection(service_supabase, row)).to_dict()
+
+
+@router.post("/email-accounts/{account_id}/reconnect", response_model=ReconnectResponse)
+async def reconnect_email_account(
+    account_id: str,
+    request: Request,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    service_supabase = get_service_role_client()
+    row = _select_ext_connection(service_supabase, account_id, current_user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    provider = validate_provider(str(row.get("provider") or ""))
+    if provider == "github":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email account provider is invalid")
+
+    external_account_id = row.get("external_account_id")
+    if external_account_id:
+        refresh = await refresh_connected_account(str(external_account_id))
+        if refresh.get("redirect_url"):
+            return refresh
+        if refresh.get("status") == "connected":
+            health = await _verify_and_persist_ext_connection(service_supabase, row)
+            return {"status": health.status}
+
+    frontend_origin = resolve_frontend_origin(request.headers.get("origin"))
+    redirect_to = normalize_redirect_to(request.headers.get("referer"), frontend_origin)
+    state = sign_login_state(
+        provider=provider,
+        redirect_to=redirect_to,
+        composio_user_id=current_user_id,
+        flow="composio-reconnect",
+        connection_id=account_id,
+    )
+    callback_query = urlencode({
+        "flow": "composio-reconnect",
+        "provider": provider,
+        "state": state,
+    })
+    callback_url = f"{frontend_origin}/oauth/callback?{callback_query}"
+    link = await create_connect_link(provider=provider, user_id=current_user_id, callback_url=callback_url)
+    redirect_url = link.get("redirect_url")
+    if not isinstance(redirect_url, str) or not redirect_url:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Composio did not return a redirect URL")
+    return {"redirect_url": redirect_url, "status": "pending"}
+
+
+@router.post("/email-accounts/complete-reconnect", response_model=ConnectionHealthResponse)
+async def complete_email_account_reconnect(
+    body: CompleteReconnectRequest,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    if body.status and body.status != "success":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Composio reconnect failed")
+    provider = validate_provider(body.provider)
+    if provider == "github":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email account provider is invalid")
+
+    state_payload = verify_login_state(body.state)
+    if state_payload.get("flow") != "composio-reconnect":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid reconnect state")
+    if state_payload.get("provider") != provider or state_payload.get("composio_user_id") != current_user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Reconnect state does not match user")
+    account_id = str(state_payload.get("connection_id") or "")
+    if not account_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reconnect state is missing account")
+    if not body.connected_account_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Composio connected account ID")
+
+    service_supabase = get_service_role_client()
+    row = _select_ext_connection(service_supabase, account_id, current_user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    service_supabase.table("ext_connections")\
+        .update({
+            "external_account_id": body.connected_account_id,
+            "is_active": True,
+            "verification_status": "pending",
+            "revoked_at": None,
+        })\
+        .eq("id", account_id)\
+        .execute()
+    row["external_account_id"] = body.connected_account_id
+    row["is_active"] = True
+    return (await _verify_and_persist_ext_connection(service_supabase, row)).to_dict()
+
+
 @router.post("/email-accounts", response_model=EmailAccountResponse, status_code=status.HTTP_201_CREATED)
 async def add_email_account(
     request: AddEmailAccountRequest,
@@ -798,6 +1088,11 @@ async def remove_email_account(
     - Stops Gmail watch
     """
     try:
+        await _best_effort_revoke_ext_connection_source(
+            get_service_role_client(),
+            account_id,
+            current_user_id,
+        )
         success = AuthService.remove_email_account(
             account_id=account_id,
             user_id=current_user_id

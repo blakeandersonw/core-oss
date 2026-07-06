@@ -90,6 +90,89 @@ export default function OAuthCallback() {
       return;
     }
 
+    if (flow === 'composio-reconnect' || flow === 'workspace-connector-reconnect') {
+      const completeReconnect = async () => {
+        try {
+          const provider = params.get('provider');
+          const state = params.get('state');
+          const status = params.get('status');
+          const connectedAccountId = params.get('connected_account_id')
+            || params.get('connectedAccountId')
+            || params.get('connection_id')
+            || params.get('connectionId');
+
+          if (!provider || !state || !connectedAccountId) {
+            throw new Error('Missing Composio reconnect parameters');
+          }
+          if (status && status !== 'success') {
+            throw new Error(errorDescription || error || 'Composio reconnect failed');
+          }
+
+          const { data } = await supabase.auth.getSession();
+          const accessToken = data.session?.access_token;
+          if (!accessToken) {
+            throw new Error('Sign in again to finish reconnecting');
+          }
+
+          const workspaceId = sessionStorage.getItem('reconnecting_workspace_id');
+          const endpoint = flow === 'workspace-connector-reconnect'
+            ? `${API_BASE}/workspaces/${workspaceId}/connectors/complete-reconnect`
+            : `${API_BASE}/auth/email-accounts/complete-reconnect`;
+          if (flow === 'workspace-connector-reconnect' && !workspaceId) {
+            throw new Error('Missing workspace reconnect context');
+          }
+
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              provider,
+              state,
+              status,
+              connected_account_id: connectedAccountId,
+            }),
+          });
+
+          if (!response.ok) {
+            let message = `Failed to complete reconnect (${response.status})`;
+            try {
+              const errorData = (await response.json()) as { detail?: unknown; message?: unknown };
+              if (typeof errorData.detail === 'string') {
+                message = errorData.detail;
+              } else if (typeof errorData.message === 'string') {
+                message = errorData.message;
+              }
+            } catch {
+              // Keep default message.
+            }
+            throw new Error(message);
+          }
+
+          const reconnectingConnectionId = sessionStorage.getItem('reconnecting_connection_id');
+          if (flow === 'workspace-connector-reconnect') {
+            if (workspaceId && reconnectingConnectionId) {
+              sessionStorage.setItem('completed_workspace_connector_reconnect_id', reconnectingConnectionId);
+              sessionStorage.setItem('completed_workspace_connector_reconnect_workspace_id', workspaceId);
+            }
+          } else if (reconnectingConnectionId) {
+            sessionStorage.setItem('completed_email_account_reconnect_id', reconnectingConnectionId);
+          }
+          sessionStorage.removeItem('reconnecting_connection_id');
+          sessionStorage.removeItem('reconnecting_workspace_id');
+          setMessage('Reconnected. Redirecting...');
+          window.location.replace(window.location.origin);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Reconnect failed');
+        }
+      };
+
+      void completeReconnect();
+      return;
+    }
+
     if (window.opener) {
       window.opener.postMessage(
         {

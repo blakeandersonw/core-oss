@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { sentryVitePlugin } from '@sentry/vite-plugin'
@@ -29,5 +29,9 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+  },
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
   },
 })

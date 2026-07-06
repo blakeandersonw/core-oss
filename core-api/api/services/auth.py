@@ -452,6 +452,8 @@ class AuthService:
             'token_expires_at': connection_data.get('token_expires_at'),
             'scopes': connection_data.get('scopes', []),
             'is_active': True,
+            'external_account_id': connection_data.get('external_account_id'),
+            'verification_status': 'connected',
             'metadata': connection_data.get('metadata') or {}
         }
 
@@ -640,6 +642,8 @@ class AuthService:
             'token_expires_at': token_expires_at,
             'scopes': oauth_data.get('scopes', []),
             'is_active': True,
+            'external_account_id': oauth_data.get('external_account_id'),
+            'verification_status': 'connected',
             'metadata': metadata
         }
 
@@ -738,10 +742,12 @@ class AuthService:
 
         # Fetch both Google and Microsoft accounts
         result = auth_supabase.table('ext_connections')\
-            .select('id, provider, provider_email, is_primary, account_order, is_active, metadata')\
+            .select(
+                'id, provider, provider_email, is_primary, account_order, is_active, metadata, '
+                'scopes, external_account_id, verification_status, last_verified_at, error_reason'
+            )\
             .eq('user_id', user_id)\
             .in_('provider', SUPPORTED_PROVIDERS)\
-            .eq('is_active', True)\
             .order('account_order')\
             .execute()
 
@@ -757,7 +763,12 @@ class AuthService:
                 'provider_avatar': metadata.get('picture') or metadata.get('avatar_url'),
                 'is_primary': conn.get('is_primary', False),
                 'account_order': conn.get('account_order', 0),
-                'is_active': conn['is_active']
+                'is_active': conn['is_active'],
+                'verification_status': conn.get('verification_status') or ('connected' if conn.get('is_active') else 'disconnected'),
+                'last_verified_at': conn.get('last_verified_at'),
+                'error_reason': conn.get('error_reason'),
+                'scopes': conn.get('scopes') or [],
+                'external_account_id': conn.get('external_account_id'),
             })
 
         return accounts
@@ -862,6 +873,8 @@ class AuthService:
             'token_expires_at': token_expires_at,
             'scopes': account_data.get('scopes', []),
             'is_active': True,
+            'external_account_id': account_data.get('external_account_id'),
+            'verification_status': 'connected',
             'is_primary': False,  # Secondary accounts are never primary
             'account_order': account_order,
             'metadata': metadata

@@ -47,9 +47,6 @@ import {
   getWorkspaceClientContacts,
   createWorkspaceClientContact,
   deleteWorkspaceClientContact,
-  getWorkspaceConnectors,
-  saveWorkspaceConnector,
-  deleteWorkspaceConnector,
   getWorkspaceApiKeys,
   createWorkspaceApiKey,
   revokeWorkspaceApiKey,
@@ -60,10 +57,12 @@ import {
   type WorkspaceInvitation,
   type WorkspaceMember,
   type WorkspaceClientContact,
-  type WorkspaceConnector,
   type WorkspaceApiKey,
   type WorkspaceWebhook,
 } from "../../api/client";
+import { useWorkspaceConnectorsStore } from "../../stores/workspaceConnectorsStore";
+import { ConnectionsList } from "../Connections/ConnectionsList";
+import { workspaceConnectorToConnection } from "../Connections/types";
 import { resolveUploadMimeType } from "../../utils/uploadMime";
 
 import SettingsView from "../Settings/SettingsView";
@@ -225,7 +224,6 @@ export default function Sidebar() {
   const [clientContacts, setClientContacts] = useState<WorkspaceClientContact[]>([]);
   const [contactKind, setContactKind] = useState<"email" | "domain">("email");
   const [contactValue, setContactValue] = useState("");
-  const [connectors, setConnectors] = useState<WorkspaceConnector[]>([]);
   const [apiKeys, setApiKeys] = useState<WorkspaceApiKey[]>([]);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [webhooks, setWebhooks] = useState<WorkspaceWebhook[]>([]);
@@ -233,6 +231,19 @@ export default function Sidebar() {
   const [developerAccessName, setDeveloperAccessName] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [settingsTabLoading, setSettingsTabLoading] = useState(false);
+  const {
+    connectorsByWorkspace,
+    isLoading: connectorsLoading,
+    isVerifying: connectorsVerifying,
+    error: connectorsError,
+    fetch: fetchWorkspaceConnectors,
+    addStub: addWorkspaceConnectorStub,
+    verifyAll: verifyWorkspaceConnectors,
+    verify: verifyWorkspaceConnector,
+    reconnect: reconnectWorkspaceConnector,
+    disconnect: disconnectWorkspaceConnector,
+  } = useWorkspaceConnectorsStore();
+  const connectors = selectedWorkspaceId ? connectorsByWorkspace[selectedWorkspaceId] || [] : [];
 
   // Refs for dropdown triggers
   const menuButtonRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -298,8 +309,8 @@ export default function Sidebar() {
         const contacts = await getWorkspaceClientContacts(workspaceId);
         setClientContacts(contacts);
       } else if (tab === "connectors") {
-        const data = await getWorkspaceConnectors(workspaceId);
-        setConnectors(data);
+        await fetchWorkspaceConnectors(workspaceId);
+        void verifyWorkspaceConnectors(workspaceId);
       } else if (tab === "developer") {
         const [keys, hooks, manifest] = await Promise.all([
           getWorkspaceApiKeys(workspaceId),
@@ -315,7 +326,7 @@ export default function Sidebar() {
     } finally {
       setSettingsTabLoading(false);
     }
-  }, []);
+  }, [fetchWorkspaceConnectors, verifyWorkspaceConnectors]);
 
   // Get target workspace based on selectedView for both display and keyboard nav
   const targetWorkspaceForNav = useMemo(() => {
@@ -746,20 +757,12 @@ export default function Sidebar() {
 
   const handlePrepareGithubConnector = async () => {
     if (!selectedWorkspaceId) return;
-    const connector = await saveWorkspaceConnector(selectedWorkspaceId, {
-      provider: "github",
-      display_name: "GitHub",
-      status: "pending",
-      scopes: ["repo", "issues", "pull_requests"],
-      metadata: { source: "composio" },
-    });
-    setConnectors((prev) => [connector, ...prev.filter((item) => item.id !== connector.id)]);
+    await addWorkspaceConnectorStub(selectedWorkspaceId, "github");
   };
 
   const handleDeleteConnector = async (connectorId: string) => {
     if (!selectedWorkspaceId) return;
-    await deleteWorkspaceConnector(selectedWorkspaceId, connectorId);
-    setConnectors((prev) => prev.filter((connector) => connector.id !== connectorId));
+    await disconnectWorkspaceConnector(selectedWorkspaceId, connectorId);
   };
 
   const handleCreateApiKey = async () => {
@@ -1902,35 +1905,19 @@ export default function Sidebar() {
                   </button>
                 )}
               </div>
-              {settingsTabLoading ? (
-                <p className="text-xs text-text-secondary">Loading...</p>
-              ) : connectors.length === 0 ? (
-                <p className="text-xs text-text-secondary">No connectors configured</p>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {connectors.map((connector) => {
-                    const connectorScopes = Array.isArray(connector.scopes) ? connector.scopes : [];
-                    return (
-                      <div key={connector.id} className="flex items-center justify-between px-3 py-3 border border-border-light rounded-lg">
-                        <div>
-                          <p className="text-sm font-medium">{connector.display_name || connector.provider}</p>
-                          <p className="text-[11px] text-text-secondary capitalize">
-                            {connector.status} {connectorScopes.length ? `• ${connectorScopes.join(", ")}` : ""}
-                          </p>
-                        </div>
-                        {canManageWorkspaceMembers && (
-                          <button
-                            onClick={() => handleDeleteConnector(connector.id)}
-                            className="text-xs text-red-500 hover:bg-red-50 px-2 py-1 rounded"
-                          >
-                            Disconnect
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <ConnectionsList
+                title="Workspace connectors"
+                connections={connectors.map(workspaceConnectorToConnection)}
+                isLoading={settingsTabLoading || connectorsLoading}
+                isVerifying={connectorsVerifying}
+                error={connectorsError}
+                emptyMessage="No connectors configured"
+                canManage={canManageWorkspaceMembers}
+                onVerifyAll={selectedWorkspaceId ? () => void verifyWorkspaceConnectors(selectedWorkspaceId, true) : undefined}
+                onVerify={selectedWorkspaceId ? (id) => void verifyWorkspaceConnector(selectedWorkspaceId, id) : undefined}
+                onReconnect={selectedWorkspaceId ? (id) => void reconnectWorkspaceConnector(selectedWorkspaceId, id) : undefined}
+                onDisconnect={handleDeleteConnector}
+              />
               <div className="pt-4 mt-auto border-t border-border-light" />
             </div>
           )}

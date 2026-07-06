@@ -67,6 +67,11 @@ async def _require_workspace_member(supabase: Any, workspace_id: str) -> None:
         )
 
 
+async def require_workspace_admin_access(user_jwt: str, workspace_id: str) -> None:
+    supabase = await get_authenticated_async_client(user_jwt)
+    await _require_workspace_admin(supabase, workspace_id)
+
+
 async def list_client_contacts(user_jwt: str, workspace_id: str) -> List[Dict[str, Any]]:
     supabase = await get_authenticated_async_client(user_jwt)
     await _require_workspace_member(supabase, workspace_id)
@@ -195,6 +200,12 @@ async def upsert_workspace_connector(
     status_value: str,
     scopes: List[str],
     metadata: Dict[str, Any],
+    external_account_id: Optional[str] = None,
+    error_reason: Optional[str] = None,
+    last_verified_at: Optional[str] = None,
+    last_error_at: Optional[str] = None,
+    failed_attempts: Optional[int] = None,
+    revoked_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     supabase = await get_authenticated_async_client(user_jwt)
     await _require_workspace_admin(supabase, workspace_id)
@@ -207,6 +218,18 @@ async def upsert_workspace_connector(
         "metadata": metadata,
         "created_by": user_id,
     }
+    if external_account_id is not None:
+        payload["external_account_id"] = external_account_id
+    if error_reason is not None or status_value in {"connected", "disconnected", "pending", "unknown"}:
+        payload["error_reason"] = error_reason
+    if last_verified_at is not None:
+        payload["last_verified_at"] = last_verified_at
+    if last_error_at is not None:
+        payload["last_error_at"] = last_error_at
+    if failed_attempts is not None:
+        payload["failed_attempts"] = failed_attempts
+    if revoked_at is not None:
+        payload["revoked_at"] = revoked_at
     result = await supabase.table("workspace_connectors")\
         .upsert(payload, on_conflict="workspace_id,provider")\
         .execute()

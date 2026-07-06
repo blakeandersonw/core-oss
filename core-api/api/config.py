@@ -120,6 +120,7 @@ class Settings(BaseSettings):
     composio_base_url: str = "https://backend.composio.dev/api/v3.1"
     composio_google_auth_config_id: str = ""  # Gmail auth config ID
     composio_microsoft_auth_config_id: str = ""  # Outlook auth config ID
+    composio_github_auth_config_id: str = ""  # GitHub auth config ID for workspace connectors
 
     # Webhook URLs (set in production)
     webhook_base_url: str = ""  # Set to your deployed API URL (e.g., https://your-api.vercel.app)

@@ -241,8 +241,16 @@ export interface WorkspaceConnector {
   workspace_id: string;
   provider: string;
   display_name?: string | null;
-  status: 'connected' | 'disconnected' | 'error' | 'pending';
+  status: 'connected' | 'disconnected' | 'error' | 'pending' | 'expired' | 'unknown';
+  external_account_id?: string | null;
   scopes: string[];
+  requested_scopes?: string[];
+  error_reason?: string | null;
+  unverified?: boolean;
+  last_error_at?: string | null;
+  last_verified_at?: string | null;
+  failed_attempts?: number;
+  revoked_at?: string | null;
   metadata?: Record<string, unknown>;
   created_at?: string;
   updated_at?: string;
@@ -279,10 +287,14 @@ function normalizeStringArray(value: unknown): string[] {
 }
 
 function normalizeWorkspaceConnector(connector: WorkspaceConnector): WorkspaceConnector {
+  const metadata = connector.metadata ?? {};
   return {
     ...connector,
     scopes: normalizeStringArray(connector.scopes),
-    metadata: connector.metadata ?? {},
+    requested_scopes: normalizeStringArray(
+      connector.requested_scopes ?? metadata.requested_scopes
+    ),
+    metadata,
   };
 }
 
@@ -834,6 +846,7 @@ export async function saveWorkspaceConnector(
     status?: WorkspaceConnector['status'];
     scopes?: string[];
     metadata?: Record<string, unknown>;
+    external_account_id?: string;
   }
 ): Promise<WorkspaceConnector> {
   const response = await api<{ connector: WorkspaceConnector }>(
@@ -845,6 +858,48 @@ export async function saveWorkspaceConnector(
 
 export async function deleteWorkspaceConnector(workspaceId: string, connectorId: string): Promise<void> {
   await api(`/workspaces/${workspaceId}/connectors/${connectorId}`, { method: 'DELETE' });
+}
+
+export async function verifyWorkspaceConnectors(workspaceId: string): Promise<WorkspaceConnector[]> {
+  const response = await api<{ connectors: WorkspaceConnector[]; count: number }>(
+    `/workspaces/${workspaceId}/connectors/verify`,
+    { method: 'POST' }
+  );
+  return (response.connectors ?? []).map(normalizeWorkspaceConnector);
+}
+
+export async function verifyWorkspaceConnector(
+  workspaceId: string,
+  connectorId: string
+): Promise<WorkspaceConnector> {
+  const response = await api<{ connector: WorkspaceConnector }>(
+    `/workspaces/${workspaceId}/connectors/${connectorId}/verify`,
+    { method: 'POST' }
+  );
+  return normalizeWorkspaceConnector(response.connector);
+}
+
+export async function reconnectWorkspaceConnector(
+  workspaceId: string,
+  connectorId: string
+): Promise<{ redirect_url?: string; status?: WorkspaceConnector['status'] }> {
+  return api(`/workspaces/${workspaceId}/connectors/${connectorId}/reconnect`, { method: 'POST' });
+}
+
+export async function completeWorkspaceConnectorReconnect(
+  workspaceId: string,
+  data: {
+    provider: string;
+    state: string;
+    status?: string | null;
+    connected_account_id?: string | null;
+  }
+): Promise<WorkspaceConnector> {
+  const response = await api<{ connector: WorkspaceConnector }>(
+    `/workspaces/${workspaceId}/connectors/complete-reconnect`,
+    { method: 'POST', body: JSON.stringify(data) }
+  );
+  return normalizeWorkspaceConnector(response.connector);
 }
 
 export async function getWorkspaceApiKeys(workspaceId: string): Promise<WorkspaceApiKey[]> {
@@ -1021,6 +1076,13 @@ export interface EmailAccount {
   is_primary: boolean;
   account_order: number;
   is_active: boolean;
+  verification_status?: WorkspaceConnector['status'];
+  last_verified_at?: string | null;
+  error_reason?: string | null;
+  unverified?: boolean;
+  scopes?: string[];
+  requested_scopes?: string[];
+  external_account_id?: string | null;
 }
 
 export interface OAuthConfig {
@@ -1035,6 +1097,47 @@ export async function getOAuthConfig(): Promise<OAuthConfig> {
 
 export async function getEmailAccounts(): Promise<{ accounts: EmailAccount[] }> {
   return api('/auth/email-accounts');
+}
+
+export async function verifyEmailAccounts(): Promise<{ accounts: EmailAccount[] }> {
+  return api('/auth/email-accounts/verify', { method: 'POST' });
+}
+
+export async function verifyEmailAccount(accountId: string): Promise<{
+  status: WorkspaceConnector['status'];
+  last_verified_at?: string | null;
+  error_reason?: string | null;
+  unverified?: boolean;
+  scopes?: string[];
+  external_account_id?: string | null;
+}> {
+  return api(`/auth/email-accounts/${accountId}/health`);
+}
+
+export async function reconnectEmailAccount(accountId: string): Promise<{
+  redirect_url?: string;
+  status?: WorkspaceConnector['status'];
+}> {
+  return api(`/auth/email-accounts/${accountId}/reconnect`, { method: 'POST' });
+}
+
+export async function completeEmailAccountReconnect(data: {
+  provider: string;
+  state: string;
+  status?: string | null;
+  connected_account_id?: string | null;
+}): Promise<{
+  status: WorkspaceConnector['status'];
+  last_verified_at?: string | null;
+  error_reason?: string | null;
+  unverified?: boolean;
+  scopes?: string[];
+  external_account_id?: string | null;
+}> {
+  return api('/auth/email-accounts/complete-reconnect', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 export async function addEmailAccount(data: {

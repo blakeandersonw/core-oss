@@ -19,7 +19,7 @@ Usage:
     yield format_event(ActionEvent(type="action", action="create_task", ...))
 """
 
-from typing import TypedDict, Any, Dict, List, Literal
+from typing import TypedDict, Any, Dict, List, Literal, Union
 import json
 
 
@@ -99,7 +99,17 @@ class ToolCallEvent(TypedDict, total=False):
 
 
 # Union type for all events (for type hints)
-StreamEvent = ContentEvent | ActionEvent | DisplayEvent | PingEvent | ErrorEvent | DoneEvent | StatusEvent | SourcesEvent | ToolCallEvent
+StreamEvent = Union[
+    ContentEvent,
+    ActionEvent,
+    DisplayEvent,
+    PingEvent,
+    ErrorEvent,
+    DoneEvent,
+    StatusEvent,
+    SourcesEvent,
+    ToolCallEvent,
+]
 
 
 # =============================================================================
@@ -246,5 +256,4 @@ def tool_exchange_event(tool_use_id: str, name: str, args: Dict[str, Any], resul
         "result": result_json,
     }
     return json.dumps(event, ensure_ascii=False) + "\n"
-
 

@@ -50,6 +50,14 @@ from api.services.syncs import (
     start_calendar_watch_service_role
 )
 from api.services.syncs.sync_dispatcher import mark_stream_dirty
+from api.services.composio import get_connected_account_status
+from api.services.connections.hardening import (
+    ext_connection_update_payload,
+    health_from_composio_status,
+    workspace_connector_update_payload,
+)
+from api.services.syncs.connection_state import deactivate_connection_with_subscriptions
+from api.services.syncs.failure_policy import get_failed_sync_quarantine_reason
 from api.services.syncs.google_services import get_google_services_for_connection
 from api.services.microsoft.microsoft_oauth_provider import (
     MicrosoftReauthRequiredError,
@@ -116,6 +124,17 @@ class WatchHealthResponse(BaseModel):
     checked: int = 0
     queued: int = 0
     errors: int = 0
+
+
+class VerifyConnectorsResponse(BaseModel):
+    """Response for connector status verification cron job."""
+    status: str
+    duration_seconds: Optional[float] = None
+    checked: int = 0
+    updated: int = 0
+    deactivated: int = 0
+    errors: int = 0
+    message: Optional[str] = None
 
 
 class DailyVerificationResponse(BaseModel):
@@ -279,6 +298,20 @@ def get_watch_health_priority() -> int:
     return max(0, min(priority, 99))
 
 
+def is_connector_verify_enabled() -> bool:
+    value = os.getenv("CONNECTOR_VERIFY_ENABLED", "false").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def get_connector_verify_batch_size() -> int:
+    value = os.getenv("CONNECTOR_VERIFY_BATCH_SIZE", "50").strip()
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        return 50
+    return max(1, min(size, 200))
+
+
 def _parse_optional_datetime(value: Optional[Any]) -> Optional[datetime]:
     if value is None or value == "":
         return None
@@ -381,6 +414,142 @@ def _chunk_connection_ids(connection_ids: List[str], batch_size: int) -> List[Li
         connection_ids[idx:idx + batch_size]
         for idx in range(0, len(connection_ids), batch_size)
     ]
+
+
+@router.get("/verify-connectors", response_model=VerifyConnectorsResponse)
+async def cron_verify_connectors(authorization: str = Header(None)):
+    """Verify Composio-backed ext_connections and workspace_connectors."""
+    if not verify_cron_auth(authorization):
+        logger.warning("⚠️ Unauthorized connector verification cron attempt")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+    if not is_connector_verify_enabled():
+        return {
+            "status": "disabled",
+            "message": "Connector verification is disabled",
+            "checked": 0,
+            "updated": 0,
+            "deactivated": 0,
+            "errors": 0,
+        }
+
+    start_time = datetime.now(timezone.utc)
+    check_in_id = capture_checkin(monitor_slug="verify-connectors", status=MonitorStatus.IN_PROGRESS)
+    checked = 0
+    updated = 0
+    deactivated = 0
+    errors = 0
+
+    try:
+        service_supabase = get_service_role_client()
+        batch_size = get_connector_verify_batch_size()
+
+        ext_result = service_supabase.table("ext_connections")\
+            .select("id, user_id, provider, external_account_id, verification_status, last_verified_at, error_reason, failed_attempts, scopes, is_active")\
+            .not_.is_("external_account_id", "null")\
+            .order("last_verified_at", desc=False, nullsfirst=True)\
+            .limit(batch_size)\
+            .execute()
+        ext_rows = ext_result.data or []
+
+        remaining = max(batch_size - len(ext_rows), 0)
+        workspace_rows: List[Dict[str, Any]] = []
+        if remaining:
+            workspace_result = service_supabase.table("workspace_connectors")\
+                .select("id, workspace_id, provider, external_account_id, status, last_verified_at, error_reason, failed_attempts, scopes")\
+                .not_.is_("external_account_id", "null")\
+                .order("last_verified_at", desc=False, nullsfirst=True)\
+                .limit(remaining)\
+                .execute()
+            workspace_rows = workspace_result.data or []
+
+        for row in ext_rows:
+            checked += 1
+            connection_id = row.get("id")
+            try:
+                status_payload = await get_connected_account_status(str(row["external_account_id"]))
+                health = health_from_composio_status(status_payload)
+                payload = ext_connection_update_payload(health)
+                if health.status in {"error", "expired", "disconnected"}:
+                    reason = get_failed_sync_quarantine_reason(
+                        provider=row.get("provider"),
+                        error=health.error_reason or health.raw_status or health.status,
+                        retry_count=row.get("failed_attempts"),
+                    ) or health.error_reason or f"Composio status is {health.status}"
+                    deactivate_connection_with_subscriptions(
+                        service_supabase,
+                        str(connection_id),
+                        reason=reason,
+                    )
+                    payload["error_reason"] = reason
+                    payload["last_error_at"] = health.last_verified_at
+                    payload["failed_attempts"] = int(row.get("failed_attempts") or 0) + 1
+                    deactivated += 1
+                service_supabase.table("ext_connections")\
+                    .update(payload)\
+                    .eq("id", connection_id)\
+                    .execute()
+                updated += 1
+            except Exception as exc:
+                errors += 1
+                logger.exception("Connector verification failed for ext_connection %s: %s", connection_id, exc)
+                try:
+                    service_supabase.table("ext_connections")\
+                        .update({
+                            "failed_attempts": int(row.get("failed_attempts") or 0) + 1,
+                            "last_error_at": datetime.now(timezone.utc).isoformat(),
+                            "error_reason": str(exc),
+                        })\
+                        .eq("id", connection_id)\
+                        .execute()
+                except Exception:
+                    logger.exception("Failed to persist connector verification error for %s", connection_id)
+
+        for row in workspace_rows:
+            checked += 1
+            connector_id = row.get("id")
+            try:
+                status_payload = await get_connected_account_status(str(row["external_account_id"]))
+                health = health_from_composio_status(status_payload)
+                payload = workspace_connector_update_payload(health)
+                if health.status in {"error", "expired", "disconnected"}:
+                    payload["failed_attempts"] = int(row.get("failed_attempts") or 0) + 1
+                service_supabase.table("workspace_connectors")\
+                    .update(payload)\
+                    .eq("id", connector_id)\
+                    .execute()
+                updated += 1
+            except Exception as exc:
+                errors += 1
+                logger.exception("Connector verification failed for workspace_connector %s: %s", connector_id, exc)
+                try:
+                    service_supabase.table("workspace_connectors")\
+                        .update({
+                            "failed_attempts": int(row.get("failed_attempts") or 0) + 1,
+                            "last_error_at": datetime.now(timezone.utc).isoformat(),
+                            "error_reason": str(exc),
+                        })\
+                        .eq("id", connector_id)\
+                        .execute()
+                except Exception:
+                    logger.exception("Failed to persist workspace connector verification error for %s", connector_id)
+
+        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+        capture_checkin(monitor_slug="verify-connectors", check_in_id=check_in_id, status=MonitorStatus.OK)
+        return {
+            "status": "completed",
+            "duration_seconds": duration,
+            "checked": checked,
+            "updated": updated,
+            "deactivated": deactivated,
+            "errors": errors,
+        }
+    except Exception as exc:
+        capture_checkin(monitor_slug="verify-connectors", check_in_id=check_in_id, status=MonitorStatus.ERROR)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Connector verification failed: {exc}",
+        )
 
 
 @router.get("/incremental-sync", response_model=IncrementalSyncResponse)
