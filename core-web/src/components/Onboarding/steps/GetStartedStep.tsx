@@ -30,7 +30,7 @@ export default function GetStartedStep({ onNext }: GetStartedStepProps) {
         />
         <img
           src="/CoreLogo.png"
-          alt="Core"
+          alt="StarterStack"
           className="relative w-20 h-20"
         />
       </motion.div>
@@ -46,7 +46,7 @@ export default function GetStartedStep({ onNext }: GetStartedStepProps) {
         }}
         className="text-4xl font-semibold text-gray-900 tracking-tight mb-4"
       >
-        Welcome to Core
+        Welcome to StarterStack
       </motion.h1>
 
       {/* Description */}

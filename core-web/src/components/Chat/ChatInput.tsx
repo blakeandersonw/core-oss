@@ -34,7 +34,7 @@ export default function ChatInput({
   onStop,
   disabled = false,
   isStreaming = false,
-  placeholder = 'Message Core...',
+  placeholder = 'Message StarterStack...',
   pendingAttachments = [],
   onAddFiles,
   onRemoveAttachment,

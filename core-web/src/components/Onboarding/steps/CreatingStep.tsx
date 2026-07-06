@@ -33,7 +33,7 @@ export default function CreatingStep({ status }: CreatingStepProps) {
           ease: "easeInOut",
         }}
       >
-        <img src="/CoreLogo.png" alt="Core" className="w-14 h-14 mb-8" />
+        <img src="/CoreLogo.png" alt="StarterStack" className="w-14 h-14 mb-8" />
       </motion.div>
 
       <h2 className="text-xl font-semibold text-gray-900 mb-3">

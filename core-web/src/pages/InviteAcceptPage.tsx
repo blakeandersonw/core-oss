@@ -97,7 +97,7 @@ export default function InviteAcceptPage() {
         clearPendingInviteToken();
         const successMessage =
           result.already_processed
-            ? 'Invitation already accepted. You can continue into Core.'
+            ? 'Invitation already accepted. You can continue into StarterStack.'
             : 'Invitation accepted. You are now a workspace member.';
         setState('success');
         setMessage(successMessage);
@@ -194,7 +194,7 @@ export default function InviteAcceptPage() {
               onClick={() => navigate('/chat')}
               className="px-4 py-2 text-sm rounded-lg bg-black text-white"
             >
-              Open Core
+              Open StarterStack
             </button>
           </div>
         )}

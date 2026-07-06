@@ -134,7 +134,7 @@ function SignInModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
                 <path d="M18 6L6 18M6 6l12 12" />
               </svg>
             </button>
-            <h2 className="text-xl font-semibold text-text-body mb-2">Sign in to Core</h2>
+            <h2 className="text-xl font-semibold text-text-body mb-2">Sign in to StarterStack</h2>
             <p className="text-text-tertiary text-sm mb-6">Choose your account to continue</p>
             <div className="space-y-3">
               <button
@@ -191,8 +191,8 @@ export default function LandingPage() {
       {/* ────────── Header ────────── */}
       <nav className="shrink-0 px-6 sm:px-12 lg:px-40 h-16 flex items-center justify-between max-w-[1400px] mx-auto w-full">
         <div className="flex items-center gap-2.5">
-          <img src="/CoreLogo.png" alt="Core" className="w-7 h-7" />
-          <span className="font-semibold text-[17px] text-text-body tracking-tight">Core</span>
+          <img src="/CoreLogo.png" alt="StarterStack" className="w-7 h-7" />
+          <span className="font-semibold text-[17px] text-text-body tracking-tight">StarterStack</span>
         </div>
         <button
           onClick={() => setShowSignInModal(true)}
@@ -308,7 +308,7 @@ export default function LandingPage() {
                               </div>
                               <div className="px-6 pb-2 shrink-0">
                                 <div className="border border-[#E7E7E6] rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
-                                  <span className="text-[8px] text-text-tertiary flex-1">Message Core...</span>
+                                  <span className="text-[8px] text-text-tertiary flex-1">Message StarterStack...</span>
                                   <div className="w-3.5 h-3.5 bg-black/8 rounded flex items-center justify-center">
                                     <svg className="w-2 h-2 text-text-tertiary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
                                   </div>
@@ -539,7 +539,7 @@ export default function LandingPage() {
                                 <h2 className="text-[9px] font-semibold">Projects</h2>
                               </div>
                               <div className="px-1 space-y-px">
-                                {["Core Web", "Mobile App", "Marketing"].map((p, i) => (
+                                {["StarterStack Web", "Mobile App", "Marketing"].map((p, i) => (
                                   <div key={p} className={`px-2 py-1 rounded text-[7px] truncate flex items-center gap-1 ${i === 0 ? 'bg-white font-medium' : 'text-text-secondary'}`}>
                                     <svg className="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                                       <path d="M19 21C20.1046 21 21 20.1046 21 19V5C21 3.89543 20.1046 3 19 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H19Z" />
@@ -556,7 +556,7 @@ export default function LandingPage() {
                                   <path d="M19 21C20.1046 21 21 20.1046 21 19V5C21 3.89543 20.1046 3 19 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H19Z" />
                                   <path d="M12 7V11M17 7V17M7 7V14" />
                                 </svg>
-                                <span className="text-[9px] font-medium">Core Web</span>
+                                <span className="text-[9px] font-medium">StarterStack Web</span>
                               </div>
                               <div className="flex-1 flex gap-1 p-1.5 bg-white overflow-hidden">
                                 {[
@@ -607,7 +607,7 @@ export default function LandingPage() {
       {/* ────────── Footer ────────── */}
       <footer className="shrink-0 px-6 sm:px-12 lg:px-40 py-4 max-w-[1400px] mx-auto w-full">
         <span className="text-text-tertiary text-sm">
-          Core &copy; 2026
+          StarterStack &copy; 2026
         </span>
       </footer>
 

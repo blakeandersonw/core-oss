@@ -84,7 +84,7 @@ export default function InviteStep({
         Invite your teammates
       </h2>
       <p className="text-base text-gray-500 leading-relaxed mb-8">
-        Core works better with more people. Add your core collaborators.
+        StarterStack works better with more people. Add your key collaborators.
       </p>
 
       <label className="block text-base font-medium text-gray-700 mb-2">

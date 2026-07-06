@@ -46,7 +46,7 @@ export default function WorkspaceNameStep({
             onChange(e.target.value.slice(0, MAX_LENGTH))
           }
           onKeyDown={handleKeyDown}
-          placeholder="ex. Core Inc."
+          placeholder="ex. StarterStack Inc."
           autoFocus
           className="w-full bg-white border border-border-gray rounded-xl px-5 py-3.5 pr-14 text-base text-gray-900 placeholder:text-gray-400 outline-none focus:border-text-tertiary transition-all"
         />
