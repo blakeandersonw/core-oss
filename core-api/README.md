@@ -73,7 +73,7 @@ GROQ_API_KEY=your_groq_api_key
 RESEND_API_KEY=your_resend_api_key
 RESEND_FROM_DOMAIN=yourdomain.com
 # Optional explicit sender (overrides RESEND_FROM_DOMAIN)
-# RESEND_FROM_EMAIL=Core <invites@yourdomain.com>
+# RESEND_FROM_EMAIL=StarterStack <invites@yourdomain.com>
 # Local dev:
 FRONTEND_URL=http://localhost:3000
 # Production:

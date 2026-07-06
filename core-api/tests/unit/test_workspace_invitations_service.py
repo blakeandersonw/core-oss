@@ -229,7 +229,7 @@ def _past_iso(days: int = 2) -> str:
 
 def _base_state() -> Dict[str, List[Dict[str, Any]]]:
     return {
-        "workspaces": [{"id": "ws-1", "name": "Core Team"}],
+        "workspaces": [{"id": "ws-1", "name": "Example Team"}],
         "users": [{"id": "admin-1", "email": "admin@example.com", "name": "Admin"}],
         "workspace_members": [],
         "workspace_invitations": [],
@@ -720,7 +720,7 @@ async def test_resolve_post_signup_preserves_read_state_for_matching_active_noti
             "user_id": "user-1",
             "workspace_id": "ws-1",
             "type": "workspace_invite",
-            "title": "Admin invited you to join Core Team",
+            "title": "Admin invited you to join Example Team",
             "body": "Role: member",
             "resource_type": "workspace_invitation",
             "resource_id": "inv-1",
@@ -728,7 +728,7 @@ async def test_resolve_post_signup_preserves_read_state_for_matching_active_noti
             "data": {
                 "invitation_id": "inv-1",
                 "workspace_id": "ws-1",
-                "workspace_name": "Core Team",
+                "workspace_name": "Example Team",
                 "inviter_name": "Admin",
                 "role": "member",
                 "status": "pending",
@@ -765,7 +765,7 @@ async def test_resolve_post_signup_preserves_read_state_for_matching_active_noti
     assert notif["read"] is True
     assert notif["seen"] is True
     assert notif["archived"] is False
-    assert notif["title"] == "Admin invited you to join Core Team"
+    assert notif["title"] == "Admin invited you to join Example Team"
     assert notif["body"] == "Role: member"
 
 
@@ -829,7 +829,7 @@ async def test_resolve_post_signup_refreshes_changed_active_notification(monkeyp
     assert notif["read"] is False
     assert notif["seen"] is False
     assert notif["archived"] is False
-    assert notif["title"] == "Admin invited you to join Core Team"
+    assert notif["title"] == "Admin invited you to join Example Team"
     assert notif["body"] == "Role: member"
 
 

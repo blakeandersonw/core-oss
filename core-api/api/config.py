@@ -182,7 +182,7 @@ class Settings(BaseSettings):
         if self.resend_from_email:
             return self.resend_from_email
         if self.resend_from_domain:
-            return f"Core <invites@{self.resend_from_domain}>"
+            return f"StarterStack <invites@{self.resend_from_domain}>"
         return ""
 
     # Cloudflare R2 settings (files bucket)

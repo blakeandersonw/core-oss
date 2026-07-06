@@ -60,7 +60,7 @@ async def _send_notification_row_email(notification: Dict[str, Any], category: s
         await send_notification_email(
             recipient_email=email,
             recipient_name=user.get("name") or email,
-            title=notification.get("title") or "Core notification",
+            title=notification.get("title") or "StarterStack notification",
             body=notification.get("body"),
             action_url=_frontend_url_for_notification(notification),
             actor_name=data.get("actor_name"),

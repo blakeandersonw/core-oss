@@ -167,7 +167,7 @@ def _build_notification_html(
     safe_recipient = _escape_html(recipient_name or "there")
     safe_body = _escape_html(body or "")
     safe_url = _escape_html(action_url)
-    safe_actor = _escape_html(actor_name or "Core")
+    safe_actor = _escape_html(actor_name or "StarterStack")
     safe_category = _escape_html(category or "notification")
     prefs_url = _escape_html(f"{_frontend_base_url()}/settings/notifications")
 
@@ -183,7 +183,7 @@ def _build_notification_html(
                 <p style=\"margin: 0 0 10px; color: #374151; line-height: 1.5;\">Hi {safe_recipient},</p>
                 {body_html}
                 <p style=\"margin: 0 0 20px;\">
-                  <a href=\"{safe_url}\" style=\"display: inline-block; background: #111827; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Open in Core</a>
+                  <a href=\"{safe_url}\" style=\"display: inline-block; background: #111827; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Open in StarterStack</a>
                 </p>
                 <p style=\"margin: 0 0 8px; color: #6b7280; font-size: 13px; word-break: break-all;\">
                   If the button does not work, open this link:<br />
@@ -210,9 +210,9 @@ def _build_notification_text(
     lines.extend(
         [
             "",
-            f"Open in Core: {action_url}",
+            f"Open in StarterStack: {action_url}",
             "",
-            f"Sent because {actor_name or 'Core'} triggered a {category or 'notification'} notification.",
+            f"Sent because {actor_name or 'StarterStack'} triggered a {category or 'notification'} notification.",
             f"Manage notification preferences: {_frontend_base_url()}/settings/notifications",
         ]
     )
@@ -260,7 +260,7 @@ def _build_digest_html(
         )
 
     return _email_shell(
-        "Core notification digest",
+        "StarterStack notification digest",
         f"""
                 <p style=\"margin: 0 0 10px; color: #374151; line-height: 1.5;\">Hi {safe_recipient},</p>
                 <p style=\"margin: 0 0 8px; color: #6b7280; line-height: 1.5;\">Here is what changed in your workspaces.</p>
@@ -276,7 +276,7 @@ def _build_digest_text(
     grouped_items: Sequence[Mapping[str, Any]],
     manage_preferences_url: str,
 ) -> str:
-    lines = ["Core notification digest", ""]
+    lines = ["StarterStack notification digest", ""]
     for group in grouped_items:
         lines.append(str(group.get("workspace_name") or "Workspace"))
         for item in group.get("items") or []:
@@ -355,7 +355,7 @@ async def send_digest_email(
     """Send a grouped notification digest email."""
     return await _send_email(
         to=recipient_email,
-        subject="Core notification digest",
+        subject="StarterStack notification digest",
         html=_build_digest_html(
             recipient_name=recipient_name,
             grouped_items=grouped_items,

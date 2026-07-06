@@ -389,17 +389,17 @@ async def delete_workspace(
         raise
 
 
-WELCOME_NOTE_CONTENT = """# Welcome to Core! 👋
+WELCOME_NOTE_CONTENT = """# Welcome to StarterStack! 👋
 
 Everything you need. In one place.
 
 ---
 
-## What is Core?
+## What is StarterStack?
 
-Core is an all-in-one productivity workspace that brings together your email, calendar, projects, files, and team messaging — all powered by an AI agent that helps you get things done faster.
+StarterStack is an all-in-one productivity workspace that brings together your email, calendar, projects, files, and team messaging — all powered by an AI agent that helps you get things done faster.
 
-Think of it as your unified hub for work — where everything connects and your AI assistant (the Core Agent) understands your full context.
+Think of it as your unified hub for work — where everything connects and your AI assistant (the StarterStack Agent) understands your full context.
 
 ---
 
@@ -410,7 +410,7 @@ Think of it as your unified hub for work — where everything connects and your 
 - **Files** — Upload, manage, and organize your files — including docs and notes that live right inside your file system
 - **Email** — Search, read, and send emails right from Core
 - **Calendar** — View, create, and manage your events
-- **Core Agent** — An AI assistant that can search across all your data, answer questions, and take actions on your behalf
+- **StarterStack Agent** — An AI assistant that can search across all your data, answer questions, and take actions on your behalf
 
 ---
 
@@ -434,7 +434,7 @@ Think of it as your unified hub for work — where everything connects and your 
 
 ## Need Help?
 
-The Core Agent is always here to help! Just ask it questions about your workspace, find information, or get things done.
+The StarterStack Agent is always here to help! Just ask it questions about your workspace, find information, or get things done.
 
 ---
 
@@ -445,7 +445,7 @@ async def _create_welcome_note(
     workspace_id: str,
     user_id: str,
 ) -> Optional[Dict[str, Any]]:
-    """Create a 'Welcome to Core' note in the workspace's files app.
+    """Create a welcome note in the workspace's files app.
 
     Uses the service role client to bypass RLS, since the user's membership
     may not yet be visible to their JWT immediately after workspace creation.
@@ -470,7 +470,7 @@ async def _create_welcome_note(
         "user_id": user_id,
         "workspace_app_id": files_app_id,
         "workspace_id": workspace_id,
-        "title": "Welcome to Core!",
+        "title": "Welcome to StarterStack!",
         "content": WELCOME_NOTE_CONTENT,
         "icon": "\U0001f44b",
         "type": "note",
