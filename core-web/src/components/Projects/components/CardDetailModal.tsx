@@ -7,6 +7,7 @@ import { useProjectsStore } from '../../../stores/projectsStore';
 import { useAuthStore } from '../../../stores/authStore';
 import {
   useProjectBoard,
+  useProjectBoardPermissions,
   useProjectMembers,
   useUpdateIssue,
   useDeleteIssue,
@@ -20,6 +21,7 @@ import LabelPicker from './LabelPicker';
 import AssigneePicker from './AssigneePicker';
 import StackedAvatars from './StackedAvatars';
 import IssueComments from './IssueComments';
+import ApprovalPanel from './ApprovalPanel';
 import { PROJECT_PRIORITY_OPTIONS } from './priorityOptions';
 
 interface CardDetailModalProps {
@@ -40,6 +42,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
   // React Query data
   const workspaceId = useProjectsStore((state) => state.workspaceId);
   const { data: boardData } = useProjectBoard(card.board_id);
+  const { data: permissionData } = useProjectBoardPermissions(card.board_id);
   const { data: members = [] } = useProjectMembers(workspaceId);
   const states = boardData?.states ?? [];
   const currentUserId = useAuthStore((s) => s.user?.id);
@@ -53,6 +56,10 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
   const creator = card.created_by ? getMemberByUserId(card.created_by) : null;
   const currentMember = currentUserId ? members.find((m) => m.user_id === currentUserId) : null;
   const canDelete = card.created_by === currentUserId || currentMember?.role === 'owner' || currentMember?.role === 'admin';
+  const capabilities = permissionData?.capabilities || {};
+  const canManageApproval = Boolean(capabilities.manage_approval);
+  const isLockedForMe = Boolean(card.approval_locked) && !canManageApproval;
+  const canEditContent = !isLockedForMe;
   const mouseDownTargetRef = useRef<EventTarget | null>(null);
 
   const closeModal = () => {
@@ -61,7 +68,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
 
   const handleClose = () => {
     // If editing and has a title, save changes before closing
-    if (isEditing && title.trim()) {
+    if (isEditing && canEditContent && title.trim()) {
       handleSave();
     } else {
       closeModal();
@@ -101,6 +108,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
   };
 
   const uploadImageFile = async (file: File) => {
+    if (!canEditContent) return;
     const mimeType = resolveUploadMimeType(file);
     if (!mimeType.startsWith('image/')) return;
 
@@ -149,6 +157,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
   };
 
   const handleRemoveImage = (index: number) => {
+    if (!canEditContent) return;
     const keyToRemove = imageR2Keys[index];
     setImageR2Keys((prev) => prev.filter((_, i) => i !== index));
     setImageUrls((prev) => prev.filter((_, i) => i !== index));
@@ -162,7 +171,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
   };
 
   const handleSave = async () => {
-    if (!title.trim()) return;
+    if (!title.trim() || !canEditContent) return;
 
     // Optimistically close for faster perceived performance
     closeModal();
@@ -238,7 +247,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
                 </span>
               </div>
             )}
-            {isEditing ? (
+            {isEditing && canEditContent ? (
               <input
                 type="text"
                 value={title}
@@ -268,7 +277,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
                     onClick={() => setShowMenu(false)}
                   />
                   <div className="absolute top-full right-0 z-20 mt-1 w-36 bg-white rounded-lg shadow-lg border border-gray-100 overflow-hidden py-1">
-                    {canDelete ? (
+                    {canDelete && canEditContent ? (
                       <button
                         onClick={() => {
                           setShowMenu(false);
@@ -282,7 +291,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
                     ) : (
                       <button
                         disabled
-                        title="Only the card creator or workspace admins can delete"
+                        title={isLockedForMe ? 'Approved cards are locked' : 'Only the card creator or workspace admins can delete'}
                         className="w-[calc(100%-8px)] mx-1 flex items-center gap-2 px-2 py-1.5 text-[12px] text-gray-300 cursor-not-allowed rounded-md"
                       >
                         <TrashIcon className="w-4 h-4" />
@@ -304,7 +313,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
 
         {/* Content */}
         <div className="px-6 pb-6 pt-6 overflow-y-auto flex-1">
-          {isEditing ? (
+          {isEditing && canEditContent ? (
             <div className="space-y-5">
               {/* Row with Priority, Due Date, Labels, Assignees */}
               <div className="flex flex-wrap items-center gap-4">
@@ -312,7 +321,8 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
                 <div className="relative">
                   <button
                     type="button"
-                    onClick={() => setShowPriorityPicker(!showPriorityPicker)}
+                    onClick={() => canEditContent && setShowPriorityPicker(!showPriorityPicker)}
+                    disabled={!canEditContent}
                     className="flex items-center gap-2 px-3 py-2 text-[13px] bg-white rounded-xl transition-all text-left hover:bg-gray-50/60"
                   >
                     {priority > 0 && priorityConfig ? (
@@ -365,7 +375,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
                 </div>
 
                 {/* Due Date */}
-                <div>
+                <div className={!canEditContent ? 'pointer-events-none opacity-50' : ''}>
                   <DatePicker
                     value={dueDate}
                     onChange={setDueDate}
@@ -375,7 +385,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
                 </div>
 
                 {/* Labels */}
-                <div>
+                <div className={!canEditContent ? 'pointer-events-none opacity-50' : ''}>
                   <LabelPicker
                     issueId={card.id}
                     boardId={card.board_id}
@@ -385,7 +395,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
                 </div>
 
                 {/* Assignees */}
-                <div>
+                <div className={!canEditContent ? 'pointer-events-none opacity-50' : ''}>
                   <AssigneePicker
                     issueId={card.id}
                     boardId={card.board_id}
@@ -401,8 +411,9 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   onPaste={handlePaste}
+                  disabled={!canEditContent}
                   rows={6}
-                  className="w-full py-1.5 text-[13px] text-gray-700 bg-transparent border-0 focus:outline-none placeholder:text-gray-400 resize-none transition-all"
+                  className="w-full py-1.5 text-[13px] text-gray-700 bg-transparent border-0 focus:outline-none placeholder:text-gray-400 resize-none transition-all disabled:opacity-50"
                   placeholder="Add a description..."
                 />
               </div>
@@ -440,7 +451,7 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
                   <button
                     type="button"
                     onClick={() => imageInputRef.current?.click()}
-                    disabled={isUploadingImage}
+                    disabled={isUploadingImage || !canEditContent}
                     className="w-16 h-16 flex items-center justify-center border border-border-gray hover:border-gray-300 rounded-lg text-gray-400 hover:text-gray-500 transition-colors disabled:opacity-50"
                   >
                     {isUploadingImage ? (
@@ -453,6 +464,13 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
               </div>
 
               {/* Comments section */}
+              <ApprovalPanel
+                card={card}
+                capabilities={capabilities}
+                currentUserId={currentUserId}
+                members={members}
+              />
+
               <div className="border-t border-gray-100 pt-5">
                 <IssueComments issueId={card.id} />
               </div>
@@ -526,6 +544,13 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
               )}
 
               {/* Comments section */}
+              <ApprovalPanel
+                card={card}
+                capabilities={capabilities}
+                currentUserId={currentUserId}
+                members={members}
+              />
+
               <div className="border-t border-gray-100 pt-5">
                 <IssueComments issueId={card.id} />
               </div>
@@ -577,18 +602,20 @@ export default function CardDetailModal({ card, onClose, initialEdit = false }: 
             {card.created_at && `Created ${formatDateFull(card.created_at)}`}
           </div>
           <div className="flex items-center gap-2">
-            {isEditing ? (
+            {isEditing && canEditContent ? (
               <button
                 onClick={handleSave}
-                disabled={!title.trim()}
+                disabled={!title.trim() || !canEditContent}
                 className="px-3 py-2 text-[12px] font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40 transition-all"
               >
                 Save
               </button>
             ) : (
               <button
-                onClick={() => setIsEditing(true)}
-                className="px-3 py-1.5 text-[12px] font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors"
+                onClick={() => canEditContent && setIsEditing(true)}
+                disabled={!canEditContent}
+                title={isLockedForMe ? 'Approved cards are locked' : undefined}
+                className="px-3 py-1.5 text-[12px] font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Edit
               </button>

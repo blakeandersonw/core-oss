@@ -1,6 +1,7 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useState, useRef, useEffect, memo, useMemo } from 'react';
+import { LockClosedIcon } from '@heroicons/react/24/outline';
 import { Flag } from '@phosphor-icons/react';
 import { differenceInCalendarDays } from 'date-fns';
 import { useProjectsStore } from '../../../stores/projectsStore';
@@ -19,20 +20,15 @@ interface KanbanCardProps {
   isDragActive?: boolean;
 }
 
-// Memoized label tag to avoid inline style object recreation
 const LabelTag = memo(function LabelTag({ color, name }: { color: string; name: string }) {
   const style = useMemo(() => ({
     backgroundColor: color + '1F',
-    color: color,
+    color,
   }), [color]);
-
   const dotStyle = useMemo(() => ({ backgroundColor: color }), [color]);
 
   return (
-    <span
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium"
-      style={style}
-    >
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium" style={style}>
       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={dotStyle} />
       {name}
     </span>
@@ -45,28 +41,23 @@ const KanbanCard = memo(function KanbanCard({
   isOverlay = false,
   onCardClick,
 }: KanbanCardProps) {
-  const { attributes, listeners, setNodeRef, transform, transition } =
-    useSortable({
-      id: card.id,
-      data: {
-        type: 'card',
-        card,
-        columnId: card.state_id,
-      },
-    });
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+    id: card.id,
+    data: {
+      type: 'card',
+      card,
+      columnId: card.state_id,
+    },
+  });
 
-  // React Query mutations
   const updateIssue = useUpdateIssue(card.board_id);
   const deleteIssue = useDeleteIssue(card.board_id);
-
-  // UI state from store
   const setSelectedCard = useProjectsStore((state) => state.setSelectedCard);
 
   const [showPriorityDropdown, setShowPriorityDropdown] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const priorityDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close priority dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (priorityDropdownRef.current && !priorityDropdownRef.current.contains(e.target as Node)) {
@@ -90,7 +81,6 @@ const KanbanCard = memo(function KanbanCard({
   };
 
   const handleCardClick = () => {
-    // Skip click if a drag just ended (within last 300ms)
     if (Date.now() - lastDragEndTime < 300) return;
     setSelectedCard(card.id);
     onCardClick?.(card.id);
@@ -98,15 +88,18 @@ const KanbanCard = memo(function KanbanCard({
 
   const handlePriorityClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (card.approval_locked) return;
     setShowPriorityDropdown(!showPriorityDropdown);
   };
 
   const handlePriorityChange = (newPriority: number) => {
+    if (card.approval_locked) return;
     setShowPriorityDropdown(false);
     updateIssue.mutate({ issueId: card.id, updates: { priority: newPriority } });
   };
 
   const handleDueDateChange = (newDate: string) => {
+    if (card.approval_locked) return;
     if (newDate) {
       updateIssue.mutate({ issueId: card.id, updates: { due_at: newDate } });
     } else {
@@ -114,8 +107,9 @@ const KanbanCard = memo(function KanbanCard({
     }
   };
 
-  const priorityConfig =
-    PROJECT_PRIORITY_OPTIONS.find((option) => option.value === card.priority) ?? null;
+  const priorityConfig = PROJECT_PRIORITY_OPTIONS.find((option) => option.value === card.priority) ?? null;
+  const approvalStatus = card.approval_status || 'none';
+  const showApprovalBadge = Boolean(card.approval_locked) || approvalStatus === 'pending' || approvalStatus === 'rejected';
 
   const cardClasses = [
     'group relative bg-white px-4 py-3 rounded-lg mb-2 cursor-default active:cursor-grabbing',
@@ -124,9 +118,7 @@ const KanbanCard = memo(function KanbanCard({
     'transition-[box-shadow,opacity] duration-200 ease-out',
     isDragging && !isOverlay && 'opacity-30',
     isOverlay && 'shadow-[0_20px_40px_rgba(0,0,0,0.12)] scale-[1.02] bg-white',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  ].filter(Boolean).join(' ');
 
   return (
     <div
@@ -137,12 +129,23 @@ const KanbanCard = memo(function KanbanCard({
       onClick={handleCardClick}
       className={cardClasses}
     >
-      {/* Title */}
       <h4 className="font-medium text-[13px] text-gray-900 leading-snug line-clamp-2 mb-3">
         {card.title}
       </h4>
 
-      {/* Labels */}
+      {showApprovalBadge && (
+        <div className="mb-3 flex items-center gap-1.5 text-[11px] text-gray-500">
+          {card.approval_locked && <LockClosedIcon className="w-3.5 h-3.5" />}
+          <span>
+            {card.approval_locked
+              ? 'Approved'
+              : approvalStatus === 'pending'
+                ? 'Pending approval'
+                : 'Changes requested'}
+          </span>
+        </div>
+      )}
+
       {card.label_objects && card.label_objects.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-3">
           {card.label_objects.slice(0, 3).map((label) => (
@@ -156,9 +159,7 @@ const KanbanCard = memo(function KanbanCard({
         </div>
       )}
 
-      {/* Metadata row: Priority, Due Date, Assignee */}
       <div className="flex items-center gap-1 -ml-1">
-        {/* Priority flag with dropdown */}
         <div className="relative" ref={priorityDropdownRef}>
           <button
             onClick={handlePriorityClick}
@@ -166,8 +167,8 @@ const KanbanCard = memo(function KanbanCard({
               card.priority > 0
                 ? `${priorityConfig?.color} ${priorityConfig?.bg}`
                 : 'text-gray-400 hover:bg-gray-50'
-            }`}
-            title="Set priority"
+            } ${card.approval_locked ? 'opacity-50 cursor-not-allowed' : ''}`}
+            title={card.approval_locked ? 'Approved cards are locked' : 'Set priority'}
           >
             <Flag size={14} weight={card.priority > 0 ? 'fill' : 'regular'} />
             {card.priority > 0 && <span>P{card.priority}</span>}
@@ -175,7 +176,6 @@ const KanbanCard = memo(function KanbanCard({
           {showPriorityDropdown && (
             <div className="absolute top-full left-0 mt-1 p-1.5 bg-white rounded-lg shadow-lg border border-gray-100 z-20">
               <div className="flex gap-1">
-                {/* No priority option */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -186,7 +186,7 @@ const KanbanCard = memo(function KanbanCard({
                   }`}
                   title="No priority"
                 >
-                  <span>–</span>
+                  <span>-</span>
                 </button>
                 {PROJECT_PRIORITY_OPTIONS.filter((option) => option.value > 0).map((option) => (
                   <button
@@ -209,7 +209,6 @@ const KanbanCard = memo(function KanbanCard({
           )}
         </div>
 
-        {/* Due Date */}
         <DatePicker
           value={card.due_at || null}
           onChange={handleDueDateChange}
@@ -218,20 +217,20 @@ const KanbanCard = memo(function KanbanCard({
           showClearButton={false}
           showRelativeDate={true}
           clickToClear
-          buttonClassName="!min-h-[28px] !min-w-[28px] !px-1.5 !py-0 !text-[11px] !gap-1 hover:bg-gray-50 !rounded-md !justify-center"
+          buttonClassName={`!min-h-[28px] !min-w-[28px] !px-1.5 !py-0 !text-[11px] !gap-1 hover:bg-gray-50 !rounded-md !justify-center ${card.approval_locked ? 'pointer-events-none opacity-50' : ''}`}
         />
 
-        {/* Assignee */}
-        <AssigneePicker
-          issueId={card.id}
-          boardId={card.board_id}
-          currentAssignees={card.assignees || []}
-          buttonClassName="!min-h-[28px] !min-w-[28px] !px-1.5 !py-0 !text-[11px] !gap-1 hover:bg-gray-50 !rounded-md !justify-center"
-          emptyState="icon-only"
-          compact
-        />
+        <div className={card.approval_locked ? 'pointer-events-none opacity-50' : ''}>
+          <AssigneePicker
+            issueId={card.id}
+            boardId={card.board_id}
+            currentAssignees={card.assignees || []}
+            buttonClassName="!min-h-[28px] !min-w-[28px] !px-1.5 !py-0 !text-[11px] !gap-1 hover:bg-gray-50 !rounded-md !justify-center"
+            emptyState="icon-only"
+            compact
+          />
+        </div>
 
-        {/* Days since created */}
         {card.created_at && (
           <span className="ml-auto text-[11px] text-gray-400 tabular-nums">
             {differenceInCalendarDays(new Date(), new Date(card.created_at))}d
@@ -239,7 +238,6 @@ const KanbanCard = memo(function KanbanCard({
         )}
       </div>
 
-      {/* Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={showDeleteConfirm}
         title="Delete card"

@@ -2847,8 +2847,45 @@ export interface ProjectIssue {
   last_edited_by?: string | null;
   last_edited_at?: string | null;
   completed_at?: string;
+  approval_status?: 'none' | 'pending' | 'approved' | 'rejected';
+  approval_requested_by?: string | null;
+  approval_requested_at?: string | null;
+  approval_note?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  approval_decision_note?: string | null;
+  approver_id?: string | null;
+  approval_locked?: boolean;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface IssueAttachmentVersion {
+  id: string;
+  workspace_app_id?: string;
+  workspace_id?: string;
+  attachment_id: string;
+  version_number: number;
+  r2_key: string;
+  file_size: number;
+  content_type: string;
+  uploaded_by?: string | null;
+  uploaded_at?: string;
+}
+
+export interface IssueAttachment {
+  id: string;
+  workspace_app_id?: string;
+  workspace_id?: string;
+  issue_id: string;
+  filename: string;
+  content_type: string;
+  current_version_id?: string | null;
+  next_version_number?: number;
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  current_version?: IssueAttachmentVersion;
 }
 
 export interface ItemPosition {
@@ -2863,6 +2900,27 @@ export interface ProjectBoardRolePreset {
   role: 'owner' | 'admin' | 'member';
   capabilities: Record<string, boolean>;
 }
+
+export interface ProjectBoardMemberPermission {
+  id: string;
+  workspace_id: string;
+  board_id: string;
+  user_id: string;
+  capabilities: Record<string, boolean>;
+}
+
+export type ProjectIssueApprovalState = Pick<
+  ProjectIssue,
+  | 'approval_status'
+  | 'approval_requested_by'
+  | 'approval_requested_at'
+  | 'approval_note'
+  | 'approved_by'
+  | 'approved_at'
+  | 'approval_decision_note'
+  | 'approver_id'
+  | 'approval_locked'
+>;
 
 export interface ProjectBoardView {
   id: string;
@@ -3091,7 +3149,7 @@ export async function deleteProjectIssue(issueId: string): Promise<{ status: str
 
 export async function getProjectBoardRolePresets(boardId: string): Promise<{
   role_presets: ProjectBoardRolePreset[];
-  member_permissions: Array<Record<string, unknown>>;
+  member_permissions: ProjectBoardMemberPermission[];
   capabilities: Record<string, boolean>;
 }> {
   return api(`/projects/boards/${boardId}/role-presets`);
@@ -3107,6 +3165,83 @@ export async function saveProjectBoardRolePreset(
     { method: 'PUT', body: JSON.stringify({ capabilities }) }
   );
   return response.role_preset;
+}
+
+export async function saveProjectBoardMemberPermission(
+  boardId: string,
+  userId: string,
+  capabilities: Record<string, boolean>
+): Promise<ProjectBoardMemberPermission> {
+  const response = await api<{ member_permission: ProjectBoardMemberPermission }>(
+    `/projects/boards/${boardId}/member-permissions/${userId}`,
+    { method: 'PUT', body: JSON.stringify({ capabilities }) }
+  );
+  return response.member_permission;
+}
+
+export async function requestIssueApproval(issueId: string, approverId: string, note?: string): Promise<ProjectIssue> {
+  return api(`/projects/issues/${issueId}/approval/request`, {
+    method: 'POST',
+    body: JSON.stringify({ approver_id: approverId, note }),
+  });
+}
+
+export async function approveIssueApproval(issueId: string, note?: string): Promise<ProjectIssue> {
+  return api(`/projects/issues/${issueId}/approval/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export async function rejectIssueApproval(issueId: string, note: string): Promise<ProjectIssue> {
+  return api(`/projects/issues/${issueId}/approval/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export async function getIssueApprovalState(issueId: string): Promise<ProjectIssueApprovalState> {
+  return api(`/projects/issues/${issueId}/approval`);
+}
+
+export async function unlockIssueApproval(issueId: string): Promise<ProjectIssue> {
+  return api(`/projects/issues/${issueId}/approval/unlock`, { method: 'POST' });
+}
+
+export async function initiateIssueAttachmentUpload(issueId: string, data: {
+  filename: string;
+  content_type: string;
+  file_size: number;
+}): Promise<{ upload_url: string; r2_key: string; expires_at: string; headers: Record<string, string> }> {
+  return api(`/projects/issues/${issueId}/attachments/upload-url`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function confirmIssueAttachmentVersion(issueId: string, data: {
+  filename: string;
+  content_type: string;
+  file_size: number;
+  r2_key: string;
+  attachment_id?: string;
+}): Promise<IssueAttachment> {
+  return api(`/projects/issues/${issueId}/attachments/confirm`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getIssueAttachments(issueId: string): Promise<{ attachments: IssueAttachment[]; count: number }> {
+  return api(`/projects/issues/${issueId}/attachments`);
+}
+
+export async function getAttachmentVersions(attachmentId: string): Promise<{ versions: IssueAttachmentVersion[]; count: number }> {
+  return api(`/projects/attachments/${attachmentId}/versions`);
+}
+
+export async function getAttachmentVersionUrl(versionId: string): Promise<{ url: string; expires_in: number }> {
+  return api(`/projects/attachment-versions/${versionId}/url`);
 }
 
 export async function getProjectBoardViews(boardId: string): Promise<ProjectBoardView[]> {

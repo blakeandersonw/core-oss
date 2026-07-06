@@ -4,10 +4,12 @@ Core notification creation — any service calls these functions.
 Uses async service role client for inserts (bypasses RLS) since we're writing
 notifications on behalf of other users (fan-out).
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 import logging
+from fastapi import BackgroundTasks
 from api.services.notifications.subscriptions import get_subscribers
 from api.services.notifications.preferences import should_notify
+from api.services.notifications.email import dispatch_notification_emails
 from lib.supabase_client import get_async_service_role_client
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,11 @@ class NotificationType:
     ACCESS_REQUESTED = "access_requested"
     ACCESS_APPROVED = "access_approved"
     ACCESS_DENIED = "access_denied"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVAL_GRANTED = "approval_granted"
+    APPROVAL_REJECTED = "approval_rejected"
+    BOARD_SETTINGS_CHANGED = "board_settings_changed"
+    DUE_DATE_REMINDER = "due_date_reminder"
     MESSAGE_RECEIVED = "message_received"
     EMAIL_RECEIVED = "email_received"
     FILE_SHARED = "file_shared"
@@ -46,11 +53,27 @@ TYPE_TO_CATEGORY: Dict[str, str] = {
     "access_requested": "sharing",
     "access_approved": "sharing",
     "access_denied": "sharing",
+    "approval_requested": "projects",
+    "approval_granted": "projects",
+    "approval_rejected": "projects",
+    "board_settings_changed": "projects",
+    "due_date_reminder": "projects",
     "message_received": "messages",
     "email_received": "email",
     "file_shared": "files",
     "file_edited": "files",
     "calendar_invite": "calendar",
+}
+
+REALTIME_EMAIL_TYPES: Set[str] = {
+    NotificationType.MENTIONED,
+    NotificationType.ACCESS_REQUESTED,
+    NotificationType.ACCESS_APPROVED,
+    NotificationType.ACCESS_DENIED,
+    NotificationType.APPROVAL_REQUESTED,
+    NotificationType.APPROVAL_GRANTED,
+    NotificationType.APPROVAL_REJECTED,
+    NotificationType.DUE_DATE_REMINDER,
 }
 
 
@@ -64,6 +87,7 @@ async def create_notification(
     actor_id: Optional[str] = None,
     workspace_id: Optional[str] = None,
     data: Optional[Dict[str, Any]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> List[Dict[str, Any]]:
     """Fan-out: creates one notification row per recipient.
 
@@ -130,6 +154,12 @@ async def create_notification(
         client = await get_async_service_role_client()
         result = await client.table("notifications").insert(rows).execute()
         logger.info(f"Created {len(result.data)} notifications (type={type})")
+        if type in REALTIME_EMAIL_TYPES:
+            await dispatch_notification_emails(
+                result.data or [],
+                category=category,
+                background_tasks=background_tasks,
+            )
         return result.data
     except Exception as e:
         logger.error(f"Failed to create notifications: {e}")
@@ -145,6 +175,7 @@ async def notify_subscribers(
     actor_id: Optional[str] = None,
     workspace_id: Optional[str] = None,
     data: Optional[Dict[str, Any]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> List[Dict[str, Any]]:
     """Convenience: looks up subscribers for a resource, then creates notifications.
 
@@ -174,4 +205,5 @@ async def notify_subscribers(
         actor_id=actor_id,
         workspace_id=workspace_id,
         data=data,
+        background_tasks=background_tasks,
     )

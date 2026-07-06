@@ -1,7 +1,7 @@
 """
 Projects router - HTTP endpoints for kanban-style boards with states and issues
 """
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Depends, Query
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -38,6 +38,16 @@ from api.services.projects import (
     delete_comment,
     add_reaction,
     remove_reaction,
+    get_issue_approval_state,
+    request_issue_approval,
+    approve_issue_approval,
+    reject_issue_approval,
+    unlock_issue_approval,
+    initiate_attachment_upload,
+    confirm_attachment_version,
+    list_issue_attachments,
+    list_attachment_versions,
+    get_attachment_version_url,
 )
 from api.dependencies import get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
@@ -233,6 +243,36 @@ class AddCommentReactionRequest(BaseModel):
 
 class UpsertRolePresetRequest(BaseModel):
     capabilities: Dict[str, bool] = Field(default_factory=dict)
+
+
+class ApprovalNoteRequest(BaseModel):
+    note: Optional[str] = None
+
+
+class ApprovalRequest(BaseModel):
+    approver_id: str
+    note: Optional[str] = None
+
+
+class IssueAttachmentUploadRequest(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=255)
+    content_type: str
+    file_size: int = Field(..., gt=0)
+
+
+class IssueAttachmentUploadResponse(BaseModel):
+    upload_url: str
+    r2_key: str
+    expires_at: str
+    headers: Dict[str, str] = Field(default_factory=dict)
+
+
+class IssueAttachmentConfirmRequest(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=255)
+    content_type: str
+    file_size: int = Field(..., gt=0)
+    r2_key: str
+    attachment_id: Optional[str] = None
 
 
 class CreateBoardViewRequest(BaseModel):
@@ -501,6 +541,67 @@ class ProjectBoardRolePresetEnvelopeResponse(BaseModel):
     role_preset: ProjectBoardRolePresetResponse
 
 
+class ProjectBoardMemberPermissionEnvelopeResponse(BaseModel):
+    member_permission: ProjectBoardMemberPermissionResponse
+
+
+class ApprovalStateResponse(BaseModel):
+    approval_status: str
+    approval_requested_by: Optional[str] = None
+    approval_requested_at: Optional[str] = None
+    approval_note: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    approval_decision_note: Optional[str] = None
+    approver_id: Optional[str] = None
+    approval_locked: bool = False
+
+
+class IssueAttachmentVersionResponse(BaseModel):
+    id: str
+    attachment_id: str
+    version_number: int
+    r2_key: str
+    file_size: int
+    content_type: str
+    uploaded_by: Optional[str] = None
+    uploaded_at: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
+class IssueAttachmentResponse(BaseModel):
+    id: str
+    issue_id: str
+    filename: str
+    content_type: str
+    current_version_id: Optional[str] = None
+    next_version_number: Optional[int] = None
+    created_by: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    current_version: Optional[IssueAttachmentVersionResponse] = None
+
+    class Config:
+        extra = "allow"
+
+
+class IssueAttachmentListResponse(BaseModel):
+    attachments: List[IssueAttachmentResponse]
+    count: int
+
+
+class IssueAttachmentVersionListResponse(BaseModel):
+    versions: List[IssueAttachmentVersionResponse]
+    count: int
+
+
+class AttachmentVersionURLResponse(BaseModel):
+    url: str
+    expires_in: int
+
+
 class ProjectBoardViewResponse(BaseModel):
     """Response model for a saved board view."""
     id: str
@@ -603,6 +704,7 @@ async def create_board_endpoint(
 async def update_board_endpoint(
     board_id: str,
     request: UpdateBoardRequest,
+    background_tasks: BackgroundTasks,
     user_jwt: str = Depends(get_current_user_jwt),
     user_id: str = Depends(get_current_user_id),
 ):
@@ -619,6 +721,7 @@ async def update_board_endpoint(
             key=request.key,
             default_role_capabilities=request.default_role_capabilities,
             enforce_column_limits=request.enforce_column_limits,
+            background_tasks=background_tasks,
         )
         return board
     except ValueError as e:
@@ -713,6 +816,51 @@ async def upsert_board_role_preset_endpoint(
         raise
     except Exception as e:
         handle_api_exception(e, "Failed to save board role preset", logger)
+
+
+@router.put("/boards/{board_id}/member-permissions/{target_user_id}", response_model=ProjectBoardMemberPermissionEnvelopeResponse)
+async def upsert_board_member_permission_endpoint(
+    board_id: str,
+    target_user_id: str,
+    request: UpsertRolePresetRequest,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Create or update per-member board permission overrides."""
+    try:
+        supabase = await get_authenticated_async_client(user_jwt)
+        await require_board_capability(
+            supabase,
+            user_id=user_id,
+            board_id=board_id,
+            capability="manage_permissions",
+        )
+        board = await get_board_by_id(user_jwt, board_id)
+        if not board:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Board not found")
+
+        membership = await supabase.table("workspace_members")\
+            .select("id")\
+            .eq("workspace_id", board["workspace_id"])\
+            .eq("user_id", target_user_id)\
+            .maybe_single()\
+            .execute()
+        if not membership.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User is not a workspace member")
+
+        result = await supabase.table("project_board_member_permissions")\
+            .upsert({
+                "workspace_id": board["workspace_id"],
+                "board_id": board_id,
+                "user_id": target_user_id,
+                "capabilities": request.capabilities,
+            }, on_conflict="board_id,user_id")\
+            .execute()
+        return {"member_permission": result.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to save board member permissions", logger)
 
 
 @router.get("/boards/{board_id}/views", response_model=ProjectBoardViewListResponse)
@@ -857,6 +1005,7 @@ async def create_state_endpoint(
 async def update_state_endpoint(
     state_id: str,
     request: UpdateStateRequest,
+    background_tasks: BackgroundTasks,
     user_jwt: str = Depends(get_current_user_jwt),
     user_id: str = Depends(get_current_user_id),
 ):
@@ -872,6 +1021,7 @@ async def update_state_endpoint(
             is_locked=request.is_locked,
             wip_limit=request.wip_limit,
             clear_wip_limit=request.clear_wip_limit,
+            background_tasks=background_tasks,
         )
         return state
     except ValueError as e:
@@ -1033,7 +1183,7 @@ async def add_label_to_issue_endpoint(
     """Add a label to an issue."""
     try:
         await _require_issue_route_capability(user_jwt, user_id, issue_id, "update_issue")
-        result = await add_label_to_issue(user_jwt, issue_id, label_id)
+        result = await add_label_to_issue(user_jwt, issue_id, label_id, current_user_id=user_id)
         return result
     except Exception as e:
         message = str(e).lower()
@@ -1055,7 +1205,7 @@ async def remove_label_from_issue_endpoint(
     """Remove a label from an issue."""
     try:
         await _require_issue_route_capability(user_jwt, user_id, issue_id, "update_issue")
-        return await remove_label_from_issue(user_jwt, issue_id, label_id)
+        return await remove_label_from_issue(user_jwt, issue_id, label_id, current_user_id=user_id)
     except Exception as e:
         handle_api_exception(e, "Failed to remove label from issue", logger)
 
@@ -1114,7 +1264,7 @@ async def remove_assignee_endpoint(
     """Remove an assignee from an issue."""
     try:
         await _require_issue_route_capability(user_jwt, current_user_id, issue_id, "assign_issue")
-        return await remove_assignee(user_jwt, issue_id, user_id)
+        return await remove_assignee(user_jwt, issue_id, user_id, current_user_id=current_user_id)
     except Exception as e:
         handle_api_exception(e, "Failed to remove assignee", logger)
 
@@ -1197,6 +1347,7 @@ async def create_issue_endpoint(
 async def update_issue_endpoint(
     issue_id: str,
     request: UpdateIssueRequest,
+    background_tasks: BackgroundTasks,
     user_jwt: str = Depends(get_current_user_jwt),
     user_id: str = Depends(get_current_user_id),
 ):
@@ -1226,6 +1377,7 @@ async def update_issue_endpoint(
             position=request.position,
             label_ids=request.label_ids,
             assignee_ids=request.assignee_ids,
+            background_tasks=background_tasks,
         )
         return issue
     except ValueError as e:
@@ -1238,6 +1390,7 @@ async def update_issue_endpoint(
 async def move_issue_endpoint(
     issue_id: str,
     request: MoveIssueRequest,
+    background_tasks: BackgroundTasks,
     user_jwt: str = Depends(get_current_user_jwt),
     user_id: str = Depends(get_current_user_id),
 ):
@@ -1249,6 +1402,7 @@ async def move_issue_endpoint(
             target_state_id=request.target_state_id,
             position=request.position,
             current_user_id=user_id,
+            background_tasks=background_tasks,
         )
         return issue
     except Exception as e:
@@ -1285,6 +1439,209 @@ async def delete_issue_endpoint(
 
 
 # ============================================================================
+# Approval Endpoints
+# ============================================================================
+
+@router.get("/issues/{issue_id}/approval", response_model=ApprovalStateResponse)
+async def get_issue_approval_endpoint(
+    issue_id: str,
+    user_jwt: str = Depends(get_current_user_jwt),
+):
+    """Get approval state for an issue."""
+    try:
+        return await get_issue_approval_state(user_jwt, issue_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to fetch approval state", logger)
+
+
+@router.post("/issues/{issue_id}/approval/request", response_model=IssueResponse)
+async def request_issue_approval_endpoint(
+    issue_id: str,
+    request: ApprovalRequest,
+    background_tasks: BackgroundTasks,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Request approval for an issue."""
+    try:
+        return await request_issue_approval(
+            user_id=user_id,
+            user_jwt=user_jwt,
+            issue_id=issue_id,
+            approver_id=request.approver_id,
+            note=request.note,
+            background_tasks=background_tasks,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to request approval", logger)
+
+
+@router.post("/issues/{issue_id}/approval/approve", response_model=IssueResponse)
+async def approve_issue_approval_endpoint(
+    issue_id: str,
+    request: ApprovalNoteRequest,
+    background_tasks: BackgroundTasks,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Approve a pending issue approval request."""
+    try:
+        return await approve_issue_approval(
+            user_id=user_id,
+            user_jwt=user_jwt,
+            issue_id=issue_id,
+            note=request.note,
+            background_tasks=background_tasks,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to approve issue", logger)
+
+
+@router.post("/issues/{issue_id}/approval/reject", response_model=IssueResponse)
+async def reject_issue_approval_endpoint(
+    issue_id: str,
+    request: ApprovalNoteRequest,
+    background_tasks: BackgroundTasks,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Reject a pending issue approval request."""
+    try:
+        return await reject_issue_approval(
+            user_id=user_id,
+            user_jwt=user_jwt,
+            issue_id=issue_id,
+            note=request.note or "",
+            background_tasks=background_tasks,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to reject issue", logger)
+
+
+@router.post("/issues/{issue_id}/approval/unlock", response_model=IssueResponse)
+async def unlock_issue_approval_endpoint(
+    issue_id: str,
+    background_tasks: BackgroundTasks,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Unlock an approved issue for revisions."""
+    try:
+        return await unlock_issue_approval(
+            user_id=user_id,
+            user_jwt=user_jwt,
+            issue_id=issue_id,
+            background_tasks=background_tasks,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to unlock issue", logger)
+
+
+# ============================================================================
+# Attachment Endpoints
+# ============================================================================
+
+@router.post("/issues/{issue_id}/attachments/upload-url", response_model=IssueAttachmentUploadResponse)
+async def initiate_issue_attachment_upload_endpoint(
+    issue_id: str,
+    request: IssueAttachmentUploadRequest,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Get a presigned PUT URL for a project issue attachment."""
+    try:
+        return await initiate_attachment_upload(
+            user_id=user_id,
+            user_jwt=user_jwt,
+            issue_id=issue_id,
+            filename=request.filename,
+            content_type=request.content_type,
+            file_size=request.file_size,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to initiate attachment upload", logger)
+
+
+@router.post("/issues/{issue_id}/attachments/confirm", response_model=IssueAttachmentResponse)
+async def confirm_issue_attachment_endpoint(
+    issue_id: str,
+    request: IssueAttachmentConfirmRequest,
+    user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Confirm an uploaded project issue attachment version."""
+    try:
+        return await confirm_attachment_version(
+            user_id=user_id,
+            user_jwt=user_jwt,
+            issue_id=issue_id,
+            filename=request.filename,
+            content_type=request.content_type,
+            file_size=request.file_size,
+            r2_key=request.r2_key,
+            attachment_id=request.attachment_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to confirm attachment upload", logger)
+
+
+@router.get("/issues/{issue_id}/attachments", response_model=IssueAttachmentListResponse)
+async def list_issue_attachments_endpoint(
+    issue_id: str,
+    user_jwt: str = Depends(get_current_user_jwt),
+):
+    """List attachments for a project issue."""
+    try:
+        attachments = await list_issue_attachments(user_jwt, issue_id)
+        return {"attachments": attachments, "count": len(attachments)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to list issue attachments", logger)
+
+
+@router.get("/attachments/{attachment_id}/versions", response_model=IssueAttachmentVersionListResponse)
+async def list_attachment_versions_endpoint(
+    attachment_id: str,
+    user_jwt: str = Depends(get_current_user_jwt),
+):
+    """List retained versions for an issue attachment."""
+    try:
+        versions = await list_attachment_versions(user_jwt, attachment_id)
+        return {"versions": versions, "count": len(versions)}
+    except Exception as e:
+        handle_api_exception(e, "Failed to list attachment versions", logger)
+
+
+@router.get("/attachment-versions/{version_id}/url", response_model=AttachmentVersionURLResponse)
+async def get_attachment_version_url_endpoint(
+    version_id: str,
+    user_jwt: str = Depends(get_current_user_jwt),
+):
+    """Get a presigned download URL for an issue attachment version."""
+    try:
+        return await get_attachment_version_url(user_jwt=user_jwt, version_id=version_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        handle_api_exception(e, "Failed to get attachment version URL", logger)
+
+
+# ============================================================================
 # Comment Endpoints
 # ============================================================================
 
@@ -1307,6 +1664,7 @@ async def get_comments_endpoint(
 async def create_comment_endpoint(
     issue_id: str,
     request: CreateCommentRequest,
+    background_tasks: BackgroundTasks,
     user_jwt: str = Depends(get_current_user_jwt),
     user_id: str = Depends(get_current_user_id),
 ):
@@ -1314,7 +1672,13 @@ async def create_comment_endpoint(
     try:
         await _require_issue_route_capability(user_jwt, user_id, issue_id, "comment_issue")
         blocks = [b.model_dump() for b in request.blocks]
-        comment = await create_comment(user_id, user_jwt, issue_id, blocks)
+        comment = await create_comment(
+            user_id,
+            user_jwt,
+            issue_id,
+            blocks,
+            background_tasks=background_tasks,
+        )
         return comment
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -1326,12 +1690,20 @@ async def create_comment_endpoint(
 async def update_comment_endpoint(
     comment_id: str,
     request: UpdateCommentRequest,
+    background_tasks: BackgroundTasks,
     user_jwt: str = Depends(get_current_user_jwt),
+    user_id: str = Depends(get_current_user_id),
 ):
     """Update a comment (author only)."""
     try:
         blocks = [b.model_dump() for b in request.blocks]
-        comment = await update_comment(user_jwt, comment_id, blocks)
+        comment = await update_comment(
+            user_jwt,
+            user_id,
+            comment_id,
+            blocks,
+            background_tasks=background_tasks,
+        )
         return comment
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

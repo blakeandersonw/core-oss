@@ -3,20 +3,22 @@ Issue service - CRUD operations for project issues/cards.
 
 Uses async Supabase client for non-blocking I/O.
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from datetime import datetime
 import logging
+from fastapi import BackgroundTasks
 from lib.supabase_client import get_authenticated_async_client
 from lib.image_proxy import generate_image_url
 from api.services.projects.access import (
     enforce_state_accepts_issue,
+    enforce_issue_not_locked,
     get_state_context,
     require_board_capability,
     require_issue_capability,
     resolve_board_capabilities,
 )
 from api.services.notifications.subscriptions import subscribe
-from api.services.notifications.create import notify_subscribers, NotificationType
+from api.services.notifications.create import create_notification, notify_subscribers, NotificationType
 from api.services.notifications.helpers import get_actor_info
 
 logger = logging.getLogger(__name__)
@@ -80,6 +82,48 @@ def _enrich_issues_with_image_urls(issues: List[Dict[str, Any]]) -> List[Dict[st
             if key
         ]
     return issues
+
+
+async def _get_issue_label_ids(supabase: Any, issue_id: str) -> Set[str]:
+    result = await supabase.table("project_issue_labels")\
+        .select("label_id")\
+        .eq("issue_id", issue_id)\
+        .execute()
+    return {row["label_id"] for row in (result.data or [])}
+
+
+async def _get_issue_assignee_ids(supabase: Any, issue_id: str) -> Set[str]:
+    result = await supabase.table("project_issue_assignees")\
+        .select("user_id")\
+        .eq("issue_id", issue_id)\
+        .execute()
+    return {row["user_id"] for row in (result.data or [])}
+
+
+async def _notify_issue_updated(
+    *,
+    issue: Dict[str, Any],
+    actor_id: str,
+    title: str,
+    data: Dict[str, Any],
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> None:
+    actor = await get_actor_info(actor_id)
+    await notify_subscribers(
+        resource_type="issue",
+        resource_id=issue["id"],
+        type=NotificationType.TASK_UPDATED,
+        title=title,
+        actor_id=actor_id,
+        workspace_id=issue.get("workspace_id"),
+        data={
+            "board_id": issue.get("board_id"),
+            "issue_title": issue.get("title"),
+            **data,
+            **actor,
+        },
+        background_tasks=background_tasks,
+    )
 
 
 async def get_issues(
@@ -360,6 +404,7 @@ async def update_issue(
     position: Optional[int] = None,
     label_ids: Optional[List[str]] = None,
     assignee_ids: Optional[List[str]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> Dict[str, Any]:
     """
     Update an issue's fields. Supports changing state (triggers completion logic).
@@ -394,6 +439,12 @@ async def update_issue(
         issue_id=issue_id,
         capability="update_issue",
     )
+    existing_label_ids: Optional[Set[str]] = None
+    existing_assignee_ids: Optional[Set[str]] = None
+    if label_ids is not None:
+        existing_label_ids = await _get_issue_label_ids(supabase, issue_id)
+    if assignee_ids is not None or due_at is not None:
+        existing_assignee_ids = await _get_issue_assignee_ids(supabase, issue_id)
 
     updates: Dict[str, Any] = {}
     if title is not None:
@@ -470,6 +521,15 @@ async def update_issue(
         updates["last_edited_at"] = datetime.utcnow().isoformat()
 
     has_junction_updates = label_ids is not None or assignee_ids is not None
+    workflow_fields = {"state_id", "position", "last_edited_by", "last_edited_at"}
+    touches_content = bool(set(updates.keys()) - workflow_fields) or has_junction_updates
+    if touches_content:
+        await enforce_issue_not_locked(
+            supabase,
+            issue=issue,
+            user_id=user_id,
+            board_id=issue["board_id"],
+        )
 
     if not updates and not has_junction_updates:
         return await get_issue_by_id(user_jwt, issue_id)  # type: ignore
@@ -545,6 +605,55 @@ async def update_issue(
                 .insert(assignee_rows)\
                 .execute()
 
+    try:
+        actor = await get_actor_info(user_id)
+        change_types: List[str] = []
+        if label_ids is not None and existing_label_ids is not None and set(label_ids) != existing_label_ids:
+            change_types.append("labels")
+        if assignee_ids is not None and existing_assignee_ids is not None and set(assignee_ids) != existing_assignee_ids:
+            change_types.append("assignees")
+
+        if change_types:
+            await notify_subscribers(
+                resource_type="issue",
+                resource_id=issue_id,
+                type=NotificationType.TASK_UPDATED,
+                title=f"{actor['actor_name']} updated {', '.join(change_types)} on: {issue.get('title', 'an issue')}",
+                actor_id=user_id,
+                workspace_id=issue.get("workspace_id"),
+                data={
+                    "board_id": issue.get("board_id"),
+                    "issue_title": issue.get("title"),
+                    "change_types": change_types,
+                    **actor,
+                },
+                background_tasks=background_tasks,
+            )
+
+        old_due_at = issue.get("due_at")
+        if due_at is not None and due_at.isoformat() != old_due_at:
+            current_assignees = set(assignee_ids) if assignee_ids is not None else (existing_assignee_ids or set())
+            if current_assignees:
+                await create_notification(
+                    recipients=list(current_assignees),
+                    type=NotificationType.TASK_UPDATED,
+                    title=f"{actor['actor_name']} set a due date for: {issue.get('title', 'an issue')}",
+                    body=due_at.isoformat(),
+                    resource_type="issue",
+                    resource_id=issue_id,
+                    actor_id=user_id,
+                    workspace_id=issue.get("workspace_id"),
+                    data={
+                        "board_id": issue.get("board_id"),
+                        "issue_title": issue.get("title"),
+                        "due_at": due_at.isoformat(),
+                        **actor,
+                    },
+                    background_tasks=background_tasks,
+                )
+    except Exception as e:
+        logger.warning(f"Notification failed for issue update: {e}")
+
     # Return enriched issue
     return await get_issue_by_id(user_jwt, issue_id)  # type: ignore
 
@@ -565,11 +674,17 @@ async def delete_issue(
         Status dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
-    await require_issue_capability(
+    issue = await require_issue_capability(
         supabase,
         user_id=user_id,
         issue_id=issue_id,
         capability="delete_issue",
+    )
+    await enforce_issue_not_locked(
+        supabase,
+        issue=issue,
+        user_id=user_id,
+        board_id=issue["board_id"],
     )
 
     await supabase.table("project_issues")\
@@ -588,6 +703,7 @@ async def move_issue(
     target_state_id: str,
     position: int,
     current_user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> Dict[str, Any]:
     """
     Move an issue to a new state and position using RPC for atomicity.
@@ -667,6 +783,25 @@ async def move_issue(
                         "state_name": state_result.data.get("name"),
                         **actor,
                     },
+                    background_tasks=background_tasks,
+                )
+            elif state_result.data:
+                issue_data = result.data
+                actor = await get_actor_info(current_user_id)
+                await notify_subscribers(
+                    resource_type="issue",
+                    resource_id=issue_id,
+                    type=NotificationType.TASK_UPDATED,
+                    title=f"{actor['actor_name']} moved: {issue_data.get('title', 'an issue')}",
+                    actor_id=current_user_id,
+                    workspace_id=issue_data.get("workspace_id"),
+                    data={
+                        "board_id": issue_data.get("board_id"),
+                        "issue_title": issue_data.get("title"),
+                        "state_name": state_result.data.get("name"),
+                        **actor,
+                    },
+                    background_tasks=background_tasks,
                 )
         except Exception as e:
             logger.warning(f"Notification failed for issue move: {e}")

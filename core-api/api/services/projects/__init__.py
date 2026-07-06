@@ -46,6 +46,20 @@ from .comments import (
     add_reaction,
     remove_reaction,
 )
+from .approvals import (
+    get_issue_approval_state,
+    request_issue_approval,
+    approve_issue_approval,
+    reject_issue_approval,
+    unlock_issue_approval,
+)
+from .attachments import (
+    initiate_attachment_upload,
+    confirm_attachment_version,
+    list_issue_attachments,
+    list_attachment_versions,
+    get_attachment_version_url,
+)
 
 __all__ = [
     # Boards
@@ -92,4 +106,16 @@ __all__ = [
     'delete_comment',
     'add_reaction',
     'remove_reaction',
+
+    # Approvals
+    'get_issue_approval_state',
+    'request_issue_approval',
+    'approve_issue_approval',
+    'reject_issue_approval',
+    'unlock_issue_approval',
+    'initiate_attachment_upload',
+    'confirm_attachment_version',
+    'list_issue_attachments',
+    'list_attachment_versions',
+    'get_attachment_version_url',
 ]

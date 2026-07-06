@@ -9,6 +9,7 @@ from lib.supabase_client import get_authenticated_async_client
 from api.services.notifications.subscriptions import subscribe
 from api.services.notifications.create import create_notification, NotificationType
 from api.services.notifications.helpers import get_actor_info
+from api.services.projects.access import enforce_issue_not_locked, get_issue_context
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +59,13 @@ async def add_assignee(
     """
     supabase = await get_authenticated_async_client(user_jwt)
 
-    # Look up issue context
-    issue_result = await supabase.table("project_issues")\
-        .select("workspace_app_id, workspace_id, title, board_id")\
-        .eq("id", issue_id)\
-        .maybe_single()\
-        .execute()
-    issue = issue_result.data
-    if not issue:
-        raise ValueError(f"Issue not found: {issue_id}")
+    issue = await get_issue_context(supabase, issue_id)
+    await enforce_issue_not_locked(
+        supabase,
+        issue=issue,
+        user_id=current_user_id or "",
+        board_id=issue["board_id"],
+    )
 
     assignee_data: Dict[str, Any] = {
         "workspace_app_id": issue["workspace_app_id"],
@@ -111,6 +110,7 @@ async def remove_assignee(
     user_jwt: str,
     issue_id: str,
     user_id: str,
+    current_user_id: str,
 ) -> Dict[str, Any]:
     """
     Remove an assignee from an issue.
@@ -124,6 +124,13 @@ async def remove_assignee(
         Status dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    issue = await get_issue_context(supabase, issue_id)
+    await enforce_issue_not_locked(
+        supabase,
+        issue=issue,
+        user_id=current_user_id,
+        board_id=issue["board_id"],
+    )
 
     await supabase.table("project_issue_assignees")\
         .delete()\

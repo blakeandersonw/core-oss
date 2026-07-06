@@ -1,7 +1,7 @@
 """Project board capability checks for client-facing workspaces."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
 
@@ -18,6 +18,9 @@ DEFAULT_ROLE_CAPABILITIES: Dict[str, Dict[str, bool]] = {
         "manage_states": True,
         "manage_board": True,
         "manage_permissions": True,
+        "request_approval": True,
+        "give_approval": True,
+        "manage_approval": True,
     },
     "admin": {
         "create_issue": True,
@@ -30,6 +33,9 @@ DEFAULT_ROLE_CAPABILITIES: Dict[str, Dict[str, bool]] = {
         "manage_states": True,
         "manage_board": True,
         "manage_permissions": True,
+        "request_approval": True,
+        "give_approval": True,
+        "manage_approval": True,
     },
     "member": {
         "create_issue": True,
@@ -42,6 +48,9 @@ DEFAULT_ROLE_CAPABILITIES: Dict[str, Dict[str, bool]] = {
         "manage_states": False,
         "manage_board": False,
         "manage_permissions": False,
+        "request_approval": True,
+        "give_approval": False,
+        "manage_approval": False,
     },
 }
 
@@ -63,7 +72,12 @@ async def get_board_context(supabase: Any, board_id: str) -> Dict[str, Any]:
 
 async def get_issue_context(supabase: Any, issue_id: str) -> Dict[str, Any]:
     result = await supabase.table("project_issues")\
-        .select("id, workspace_id, workspace_app_id, board_id, state_id, created_by")\
+        .select(
+            "id, workspace_id, workspace_app_id, board_id, state_id, title, due_at, "
+            "created_by, approval_status, approval_requested_by, approval_requested_at, "
+            "approval_note, approved_by, approved_at, approval_decision_note, "
+            "approver_id, approval_locked"
+        )\
         .eq("id", issue_id)\
         .maybe_single()\
         .execute()
@@ -161,6 +175,81 @@ async def require_issue_capability(
         capability=capability,
     )
     return issue
+
+
+async def enforce_issue_not_locked(
+    supabase: Any,
+    *,
+    issue: Dict[str, Any],
+    user_id: str,
+    board_id: str,
+) -> None:
+    if not issue.get("approval_locked"):
+        return
+
+    capabilities = await resolve_board_capabilities(
+        supabase,
+        user_id=user_id,
+        board_id=board_id,
+    )
+    if capabilities.get("manage_approval", False):
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Issue is locked by approval",
+    )
+
+
+def require_issue_approver(issue: Dict[str, Any], user_id: str) -> None:
+    if issue.get("approver_id") == user_id:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only the assigned approver can decide this approval",
+    )
+
+
+async def get_users_with_board_capability(
+    supabase: Any,
+    *,
+    board_id: str,
+    capability: str,
+) -> List[str]:
+    board = await get_board_context(supabase, board_id)
+    members = await supabase.table("workspace_members")\
+        .select("user_id")\
+        .eq("workspace_id", board["workspace_id"])\
+        .execute()
+
+    user_ids: List[str] = []
+    for row in members.data or []:
+        user_id = row.get("user_id")
+        if not user_id:
+            continue
+        try:
+            capabilities = await resolve_board_capabilities(
+                supabase,
+                user_id=user_id,
+                board_id=board_id,
+            )
+        except HTTPException:
+            continue
+        if capabilities.get(capability, False):
+            user_ids.append(user_id)
+    return user_ids
+
+
+async def get_board_notification_recipients(
+    supabase: Any,
+    board_id: str,
+) -> List[str]:
+    board = await get_board_context(supabase, board_id)
+    result = await supabase.table("workspace_members")\
+        .select("user_id")\
+        .eq("workspace_id", board["workspace_id"])\
+        .execute()
+    return [row["user_id"] for row in (result.data or []) if row.get("user_id")]
 
 
 async def enforce_state_accepts_issue(

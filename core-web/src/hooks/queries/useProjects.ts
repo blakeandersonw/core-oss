@@ -18,6 +18,16 @@ import {
   deleteProjectIssue,
   moveProjectIssue,
   reorderProjectIssues,
+  getProjectBoardRolePresets,
+  requestIssueApproval,
+  approveIssueApproval,
+  rejectIssueApproval,
+  unlockIssueApproval,
+  getIssueAttachments,
+  getAttachmentVersions,
+  getAttachmentVersionUrl,
+  initiateIssueAttachmentUpload,
+  confirmIssueAttachmentVersion,
   createProjectLabel,
   addLabelToIssue,
   removeLabelFromIssue,
@@ -29,10 +39,13 @@ import {
   addCommentReaction,
   removeCommentReaction,
   type ProjectBoard,
+  type ProjectBoardMemberPermission,
   type ProjectState,
   type ProjectIssue,
   type ProjectLabel,
   type ProjectIssueAssignee,
+  type IssueAttachment,
+  type IssueAttachmentVersion,
   type WorkspaceMember,
   type IssueComment,
   type ContentBlock,
@@ -49,10 +62,13 @@ export type {
   ProjectIssue,
   ProjectLabel,
   ProjectIssueAssignee,
+  IssueAttachment,
+  IssueAttachmentVersion,
   WorkspaceMember,
   IssueComment,
   ContentBlock,
   CommentReaction,
+  ProjectBoardMemberPermission,
 };
 
 // ============================================================================
@@ -64,6 +80,7 @@ const STALE_TIMES = {
   boardData: 2 * 60 * 1000, // 2 min - issues change often
   comments: 30 * 1000, // 30 sec - conversations move fast
   members: 10 * 60 * 1000, // 10 min - very stable
+  attachments: 30 * 1000,
 };
 
 const DEFAULT_TODO_COLOR = '#EF4444';
@@ -332,6 +349,18 @@ export function useProjectMembers(workspaceId: string | null) {
       return getWorkspaceMembers(workspaceId);
     },
     enabled: !!workspaceId,
+    staleTime: STALE_TIMES.members,
+  });
+}
+
+export function useProjectBoardPermissions(boardId: string | null) {
+  return useQuery({
+    queryKey: projectKeys.boardPermissions(boardId ?? ''),
+    queryFn: async () => {
+      if (!boardId) throw new Error('No board ID');
+      return getProjectBoardRolePresets(boardId);
+    },
+    enabled: !!boardId,
     staleTime: STALE_TIMES.members,
   });
 }
@@ -837,6 +866,119 @@ export function useUpdateIssue(boardId: string | null) {
         queryClient.setQueryData(boardDataKey, context.previousBoardData);
       }
     },
+  });
+}
+
+export function useIssueApprovalActions(boardId: string | null) {
+  const queryClient = useQueryClient();
+  const boardDataKey = projectKeys.boardData(boardId ?? '');
+
+  const replaceIssue = (updated: ProjectIssue) => {
+    queryClient.setQueryData(boardDataKey, (old: BoardData | undefined) =>
+      old ? { ...old, issues: old.issues.map((issue) => (issue.id === updated.id ? updated : issue)) } : old
+    );
+  };
+
+  const requestApproval = useMutation({
+    mutationFn: ({ issueId, approverId, note }: { issueId: string; approverId: string; note?: string }) =>
+      requestIssueApproval(issueId, approverId, note),
+    onSuccess: replaceIssue,
+  });
+
+  const approveApproval = useMutation({
+    mutationFn: ({ issueId, note }: { issueId: string; note?: string }) =>
+      approveIssueApproval(issueId, note),
+    onSuccess: replaceIssue,
+  });
+
+  const rejectApproval = useMutation({
+    mutationFn: ({ issueId, note }: { issueId: string; note: string }) =>
+      rejectIssueApproval(issueId, note),
+    onSuccess: replaceIssue,
+  });
+
+  const unlockApproval = useMutation({
+    mutationFn: ({ issueId }: { issueId: string }) => unlockIssueApproval(issueId),
+    onSuccess: replaceIssue,
+  });
+
+  return { requestApproval, approveApproval, rejectApproval, unlockApproval };
+}
+
+export function useIssueAttachments(issueId: string | null) {
+  return useQuery({
+    queryKey: projectKeys.attachments(issueId ?? ''),
+    queryFn: async () => {
+      if (!issueId) throw new Error('No issue ID');
+      const result = await getIssueAttachments(issueId);
+      return result.attachments;
+    },
+    enabled: !!issueId && !issueId.startsWith('temp-'),
+    staleTime: STALE_TIMES.attachments,
+  });
+}
+
+export function useAttachmentVersions(attachmentId: string | null) {
+  return useQuery({
+    queryKey: projectKeys.attachmentVersions(attachmentId ?? ''),
+    queryFn: async () => {
+      if (!attachmentId) throw new Error('No attachment ID');
+      const result = await getAttachmentVersions(attachmentId);
+      return result.versions;
+    },
+    enabled: !!attachmentId,
+    staleTime: STALE_TIMES.attachments,
+  });
+}
+
+export function useUploadAttachmentVersion(boardId: string | null) {
+  const queryClient = useQueryClient();
+  const boardDataKey = projectKeys.boardData(boardId ?? '');
+
+  return useMutation({
+    mutationFn: async ({
+      issueId,
+      file,
+      attachmentId,
+    }: {
+      issueId: string;
+      file: File;
+      attachmentId?: string;
+    }) => {
+      const upload = await initiateIssueAttachmentUpload(issueId, {
+        filename: file.name,
+        content_type: file.type || 'application/octet-stream',
+        file_size: file.size,
+      });
+
+      const put = await fetch(upload.upload_url, {
+        method: 'PUT',
+        body: file,
+        headers: upload.headers,
+      });
+      if (!put.ok) {
+        throw new Error('Attachment upload failed');
+      }
+
+      return confirmIssueAttachmentVersion(issueId, {
+        filename: file.name,
+        content_type: file.type || 'application/octet-stream',
+        file_size: file.size,
+        r2_key: upload.r2_key,
+        attachment_id: attachmentId,
+      });
+    },
+    onSuccess: (attachment, variables) => {
+      queryClient.invalidateQueries({ queryKey: projectKeys.attachments(variables.issueId) });
+      queryClient.invalidateQueries({ queryKey: projectKeys.attachmentVersions(attachment.id) });
+      queryClient.invalidateQueries({ queryKey: boardDataKey });
+    },
+  });
+}
+
+export function useAttachmentVersionUrl() {
+  return useMutation({
+    mutationFn: (versionId: string) => getAttachmentVersionUrl(versionId),
   });
 }
 

@@ -59,6 +59,12 @@ export const projectKeys = {
     [...projectKeys.all, 'comments', issueId] as const,
   members: (workspaceId: string) =>
     [...projectKeys.all, 'members', workspaceId] as const,
+  boardPermissions: (boardId: string) =>
+    [...projectKeys.all, 'boardPermissions', boardId] as const,
+  attachments: (issueId: string) =>
+    [...projectKeys.all, 'attachments', issueId] as const,
+  attachmentVersions: (attachmentId: string) =>
+    [...projectKeys.all, 'attachmentVersions', attachmentId] as const,
 };
 
 // Files
