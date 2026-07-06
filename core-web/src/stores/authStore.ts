@@ -72,13 +72,6 @@ const MICROSOFT_OAUTH_SCOPES = [
   'MailboxSettings.Read',
 ];
 
-const MICROSOFT_FULL_SCOPES = [
-  'openid',
-  'profile',
-  'offline_access',
-  ...MICROSOFT_OAUTH_SCOPES,
-];
-
 const COMPLETE_OAUTH_SCOPES: Record<BackendOAuthProvider, string[]> = {
   google: GOOGLE_OAUTH_SCOPES,
   microsoft: MICROSOFT_OAUTH_SCOPES,
@@ -94,9 +87,9 @@ class OAuthStartError extends Error {
   }
 }
 
-function shouldFallbackToSupabaseOAuth(error: unknown): boolean {
-  if (!(error instanceof OAuthStartError)) return false;
-  return error.status === 404 || error.status === 501;
+function isFetchNetworkError(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  return /failed to fetch|networkerror|load failed/i.test(error.message);
 }
 
 function isSupabaseOAuthProvider(value: unknown): value is SupabaseOAuthProvider {
@@ -152,14 +145,20 @@ function getProviderUserId(user: User, provider: SupabaseOAuthProvider): string 
 }
 
 async function startComposioLogin(provider: ComposioLoginProvider, redirectTo?: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/auth/composio/start`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      provider,
-      redirect_to: redirectTo || window.location.href,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/auth/composio/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider,
+        redirect_to: redirectTo || window.location.href,
+      }),
+    });
+  } catch (error) {
+    if (!isFetchNetworkError(error)) throw error;
+    throw new OAuthStartError(`Could not reach the auth API at ${API_BASE} to start ${provider} sign-in`);
+  }
 
   if (!response.ok) {
     let message = `Failed to start ${provider} sign-in`;
@@ -182,27 +181,6 @@ async function startComposioLogin(provider: ComposioLoginProvider, redirectTo?: 
   }
 
   window.location.assign(data.redirect_url);
-}
-
-async function startSupabaseOAuthLogin(provider: SupabaseOAuthProvider, redirectTo?: string): Promise<void> {
-  const isGoogle = provider === 'google';
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider,
-    options: {
-      redirectTo: redirectTo || window.location.origin,
-      scopes: (isGoogle ? GOOGLE_OAUTH_SCOPES : MICROSOFT_FULL_SCOPES).join(' '),
-      ...(isGoogle
-        ? {
-            queryParams: {
-              access_type: 'offline',
-              prompt: 'consent',
-            },
-          }
-        : {}),
-    },
-  });
-
-  if (error) throw error;
 }
 
 async function completeOAuthConnection(session: Session): Promise<void> {
@@ -377,12 +355,7 @@ export const useAuthStore = create<AuthState>()(
           ? redirectToOrEvent
           : undefined;
         trackEvent('sign_in_started', { method: 'google' });
-        try {
-          await startComposioLogin('google', redirectTo);
-        } catch (error) {
-          if (!shouldFallbackToSupabaseOAuth(error)) throw error;
-          await startSupabaseOAuthLogin('google', redirectTo);
-        }
+        await startComposioLogin('google', redirectTo);
       },
 
       signInWithMicrosoft: async (redirectToOrEvent?: unknown) => {
@@ -390,12 +363,7 @@ export const useAuthStore = create<AuthState>()(
           ? redirectToOrEvent
           : undefined;
         trackEvent('sign_in_started', { method: 'microsoft' });
-        try {
-          await startComposioLogin('microsoft', redirectTo);
-        } catch (error) {
-          if (!shouldFallbackToSupabaseOAuth(error)) throw error;
-          await startSupabaseOAuthLogin('azure', redirectTo);
-        }
+        await startComposioLogin('microsoft', redirectTo);
       },
 
       signUpWithEmail: async (email, password) => {
