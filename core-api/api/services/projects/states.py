@@ -5,8 +5,12 @@ Uses async Supabase client for non-blocking I/O.
 """
 from typing import Dict, Any, List, Optional
 import logging
+from fastapi import BackgroundTasks
 from lib.supabase_client import get_authenticated_async_client
+from api.services.notifications.create import create_notification, NotificationType
+from api.services.notifications.helpers import get_actor_info
 from api.services.projects.access import (
+    get_board_notification_recipients,
     get_state_context,
     require_board_capability,
 )
@@ -114,6 +118,7 @@ async def update_state(
     is_locked: Optional[bool] = None,
     wip_limit: Optional[int] = None,
     clear_wip_limit: bool = False,
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> Dict[str, Any]:
     """
     Update a state's fields.
@@ -166,6 +171,30 @@ async def update_state(
 
     if not result.data:
         raise ValueError(f"State not found: {state_id}")
+
+    try:
+        updated_state = result.data[0]
+        actor = await get_actor_info(user_id)
+        recipients = await get_board_notification_recipients(supabase, state["board_id"])
+        await create_notification(
+            recipients=recipients,
+            type=NotificationType.BOARD_SETTINGS_CHANGED,
+            title=f"{actor['actor_name']} updated a board column: {updated_state.get('name', 'Column')}",
+            resource_type="board",
+            resource_id=state["board_id"],
+            actor_id=user_id,
+            workspace_id=state.get("workspace_id"),
+            data={
+                "board_id": state["board_id"],
+                "state_id": state_id,
+                "state_name": updated_state.get("name"),
+                "changed_fields": list(updates.keys()),
+                **actor,
+            },
+            background_tasks=background_tasks,
+        )
+    except Exception as e:
+        logger.warning(f"Notification failed for state update: {e}")
 
     return result.data[0]
 

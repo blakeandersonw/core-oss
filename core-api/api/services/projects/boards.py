@@ -5,9 +5,12 @@ Uses async Supabase client for non-blocking I/O.
 """
 from typing import Dict, Any, List, Optional
 import logging
+from fastapi import BackgroundTasks
 from fastapi import HTTPException, status
 from lib.supabase_client import get_authenticated_async_client
-from api.services.projects.access import require_board_capability
+from api.services.notifications.create import create_notification, NotificationType
+from api.services.notifications.helpers import get_actor_info
+from api.services.projects.access import get_board_notification_recipients, require_board_capability
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +179,7 @@ async def update_board(
     key: Optional[str] = None,
     default_role_capabilities: Optional[Dict[str, Any]] = None,
     enforce_column_limits: Optional[bool] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> Dict[str, Any]:
     """
     Update a board's fields.
@@ -227,6 +231,29 @@ async def update_board(
 
     if not result.data:
         raise ValueError(f"Board not found: {board_id}")
+
+    try:
+        board = result.data[0]
+        actor = await get_actor_info(user_id)
+        recipients = await get_board_notification_recipients(supabase, board_id)
+        await create_notification(
+            recipients=recipients,
+            type=NotificationType.BOARD_SETTINGS_CHANGED,
+            title=f"{actor['actor_name']} updated board settings: {board.get('name', 'Project board')}",
+            resource_type="board",
+            resource_id=board_id,
+            actor_id=user_id,
+            workspace_id=board.get("workspace_id"),
+            data={
+                "board_id": board_id,
+                "board_name": board.get("name"),
+                "changed_fields": list(updates.keys()),
+                **actor,
+            },
+            background_tasks=background_tasks,
+        )
+    except Exception as e:
+        logger.warning(f"Notification failed for board update: {e}")
 
     return result.data[0]
 

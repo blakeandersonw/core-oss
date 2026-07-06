@@ -3,11 +3,12 @@ Comment service - CRUD operations for project issue comments.
 
 Provides GitHub-style flat, chronological comments on issues with reactions.
 """
-from typing import Dict, Any, List, cast
+from typing import Dict, Any, List, Optional, Set, cast
 import logging
+from fastapi import BackgroundTasks
 from lib.supabase_client import get_authenticated_async_client
 from api.services.notifications.subscriptions import subscribe
-from api.services.notifications.create import notify_subscribers, NotificationType
+from api.services.notifications.create import create_notification, notify_subscribers, NotificationType
 from api.services.notifications.helpers import get_actor_info
 from api.services.users import attach_public_profiles
 
@@ -33,13 +34,90 @@ def extract_plain_text(blocks: List[Dict[str, Any]]) -> str:
         if block_type == "text":
             text_parts.append(data.get("content", ""))
         elif block_type == "mention":
-            text_parts.append(f"@{data.get('display_name', '')}")
+            display_name = data.get("display_name") or data.get("displayName") or ""
+            text_parts.append(f"@{display_name}")
         elif block_type == "code":
             text_parts.append(data.get("content", ""))
         elif block_type == "quote":
             text_parts.append(data.get("preview", ""))
 
     return " ".join(text_parts).strip()
+
+
+def extract_mentioned_user_ids(blocks: List[Dict[str, Any]]) -> List[str]:
+    """Extract person mention user IDs from comment blocks."""
+    mentioned: List[str] = []
+    seen: Set[str] = set()
+
+    for block in blocks:
+        if block.get("type") != "mention":
+            continue
+        data = block.get("data", {}) or {}
+        entity_type = data.get("entity_type") or data.get("entityType")
+        entity_id = data.get("entity_id") or data.get("entityId")
+        if entity_type != "person" or not entity_id or entity_id in seen:
+            continue
+        seen.add(str(entity_id))
+        mentioned.append(str(entity_id))
+
+    return mentioned
+
+
+async def _filter_workspace_member_ids(
+    supabase: Any,
+    workspace_id: str,
+    user_ids: List[str],
+) -> List[str]:
+    if not user_ids:
+        return []
+
+    result = await supabase.table("workspace_members")\
+        .select("user_id")\
+        .eq("workspace_id", workspace_id)\
+        .in_("user_id", user_ids)\
+        .execute()
+
+    valid = {row["user_id"] for row in (result.data or [])}
+    return [uid for uid in user_ids if uid in valid]
+
+
+async def _notify_mentions(
+    supabase: Any,
+    *,
+    actor_id: str,
+    issue_id: str,
+    issue: Dict[str, Any],
+    content: str,
+    mentioned_user_ids: List[str],
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> None:
+    valid_mentions = await _filter_workspace_member_ids(
+        supabase,
+        workspace_id=issue["workspace_id"],
+        user_ids=[uid for uid in mentioned_user_ids if uid != actor_id],
+    )
+    if not valid_mentions:
+        return
+
+    actor = await get_actor_info(actor_id)
+    comment_preview = (content[:100] + "...") if len(content) > 100 else content
+    await create_notification(
+        recipients=valid_mentions,
+        type=NotificationType.MENTIONED,
+        title=f"{actor['actor_name']} mentioned you in: {issue['title']}",
+        body=comment_preview if comment_preview else None,
+        resource_type="issue",
+        resource_id=issue_id,
+        actor_id=actor_id,
+        workspace_id=issue["workspace_id"],
+        data={
+            "board_id": issue.get("board_id"),
+            "issue_title": issue["title"],
+            "comment_preview": comment_preview,
+            **actor,
+        },
+        background_tasks=background_tasks,
+    )
 
 
 async def get_comments(
@@ -110,6 +188,7 @@ async def create_comment(
     user_jwt: str,
     issue_id: str,
     blocks: List[Dict[str, Any]],
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> Dict[str, Any]:
     """
     Create a new comment on an issue.
@@ -188,6 +267,17 @@ async def create_comment(
                 "comment_preview": comment_preview,
                 **actor,
             },
+            background_tasks=background_tasks,
+        )
+
+        await _notify_mentions(
+            supabase,
+            actor_id=user_id,
+            issue_id=issue_id,
+            issue=issue,
+            content=content,
+            mentioned_user_ids=extract_mentioned_user_ids(blocks),
+            background_tasks=background_tasks,
         )
     except Exception as e:
         logger.warning(f"Notification failed for comment create: {e}")
@@ -197,8 +287,10 @@ async def create_comment(
 
 async def update_comment(
     user_jwt: str,
+    user_id: str,
     comment_id: str,
     blocks: List[Dict[str, Any]],
+    background_tasks: Optional[BackgroundTasks] = None,
 ) -> Dict[str, Any]:
     """
     Update a comment's content (author only via RLS).
@@ -212,6 +304,16 @@ async def update_comment(
         Updated comment dict
     """
     supabase = await get_authenticated_async_client(user_jwt)
+    existing_result = await supabase.table("project_issue_comments")\
+        .select("*")\
+        .eq("id", comment_id)\
+        .maybe_single()\
+        .execute()
+
+    if not existing_result.data:
+        raise ValueError(f"Comment not found or unauthorized: {comment_id}")
+
+    old_blocks = existing_result.data.get("blocks") or []
 
     # Extract plain text for search
     content = extract_plain_text(blocks)
@@ -242,6 +344,28 @@ async def update_comment(
         .execute()
 
     comment["reactions"] = reactions_result.data or []
+
+    try:
+        old_mentions = set(extract_mentioned_user_ids(old_blocks))
+        new_mentions = extract_mentioned_user_ids(blocks)
+        newly_mentioned = [uid for uid in new_mentions if uid not in old_mentions]
+        if newly_mentioned:
+            issue_result = await supabase.table("project_issues")\
+                .select("workspace_app_id, workspace_id, title, board_id")\
+                .eq("id", comment["issue_id"])\
+                .single()\
+                .execute()
+            await _notify_mentions(
+                supabase,
+                actor_id=user_id,
+                issue_id=comment["issue_id"],
+                issue=issue_result.data,
+                content=content,
+                mentioned_user_ids=newly_mentioned,
+                background_tasks=background_tasks,
+            )
+    except Exception as e:
+        logger.warning(f"Mention notification failed for comment update: {e}")
 
     return comment
 

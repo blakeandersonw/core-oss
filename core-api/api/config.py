@@ -163,11 +163,15 @@ class Settings(BaseSettings):
     # Exa API settings (for web search RAG)
     exa_api_key: str = ""
 
-    # Resend API settings (workspace invitations)
+    # Resend API settings (workspace invitations and notification emails)
     resend_api_key: str = ""
     resend_from_domain: str = ""
     resend_from_email: str = ""
     frontend_url: str = "http://localhost:3000"
+    notification_emails_enabled: bool = False
+    digest_batch_size: int = 500
+    due_reminder_batch_size: int = 200
+    due_reminder_window_hours: int = 24
 
     @property
     def resend_from_address(self) -> str:

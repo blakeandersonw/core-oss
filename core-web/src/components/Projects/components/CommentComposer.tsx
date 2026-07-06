@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import type { ContentBlock } from '../../../api/client';
@@ -13,18 +13,67 @@ interface CommentComposerProps {
   onSend: (blocks: ContentBlock[]) => void;
   disabled?: boolean;
   placeholder?: string;
+  initialContent?: string;
+  submitLabel?: string;
+  onCancel?: () => void;
+}
+
+type TipTapJsonNode = {
+  type?: string;
+  text?: string;
+  marks?: Array<{ type?: string; attrs?: Record<string, unknown> }>;
+  content?: TipTapJsonNode[];
+};
+
+function serializeCommentBlocks(editor: Editor): ContentBlock[] {
+  const text = editor.getText().trim();
+  const html = editor.getHTML();
+  const isFormatted = html !== `<p>${text}</p>`;
+  const blocks: ContentBlock[] = [
+    {
+      type: 'text',
+      data: isFormatted ? { content: text, html } : { content: text },
+    },
+  ];
+
+  const visit = (node: TipTapJsonNode) => {
+    if (node.type === 'text' && node.marks) {
+      node.marks.forEach((mark) => {
+        if (mark.type !== 'mention') return;
+        const attrs = mark.attrs || {};
+        if (attrs.entityType !== 'person' || typeof attrs.entityId !== 'string') return;
+        blocks.push({
+          type: 'mention',
+          data: {
+            entityType: 'person',
+            entityId: attrs.entityId,
+            displayName: typeof attrs.displayName === 'string' ? attrs.displayName : node.text || 'someone',
+            display_name: typeof attrs.displayName === 'string' ? attrs.displayName : node.text || 'someone',
+            icon: typeof attrs.icon === 'string' ? attrs.icon : undefined,
+          },
+        });
+      });
+    }
+    node.content?.forEach(visit);
+  };
+
+  visit(editor.getJSON() as TipTapJsonNode);
+  return blocks;
 }
 
 export default function CommentComposer({
   onSend,
   disabled = false,
   placeholder = 'Add a comment...',
+  initialContent,
+  submitLabel = 'Post',
+  onCancel,
 }: CommentComposerProps) {
   const workspaceId = useProjectsStore((s) => s.workspaceId);
   const [showMentionAutocomplete, setShowMentionAutocomplete] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionCursorCoords, setMentionCursorCoords] = useState<{ top: number; bottom: number; left: number } | undefined>();
-  const [hasContent, setHasContent] = useState(false);
+  const [hasContent, setHasContent] = useState(Boolean(initialContent));
   const composerRef = useRef<HTMLDivElement>(null);
 
   const handleSend = useCallback(() => {
@@ -33,16 +82,7 @@ export default function CommentComposer({
     const text = editor.getText();
     if (!text.trim()) return;
 
-    const html = editor.getHTML();
-    const isFormatted = html !== `<p>${text}</p>`;
-    const blocks: ContentBlock[] = [
-      {
-        type: 'text',
-        data: isFormatted ? { content: text.trim(), html } : { content: text.trim() },
-      },
-    ];
-
-    onSend(blocks);
+    onSend(serializeCommentBlocks(editor));
     editor.commands.clearContent();
     setHasContent(false);
   }, [onSend, disabled]);
@@ -60,6 +100,7 @@ export default function CommentComposer({
       UniversalMentionMark,
       Placeholder.configure({ placeholder }),
     ],
+    content: initialContent,
     editorProps: {
       attributes: {
         class: 'outline-none text-[13px] text-gray-700 min-h-[24px] max-h-[120px] overflow-y-auto',
@@ -155,14 +196,25 @@ export default function CommentComposer({
         <div className="flex-1">
           <EditorContent editor={editor} />
         </div>
-        {(hasContent || disabled) && (
-          <button
-            onClick={handleSend}
-            disabled={disabled || !hasContent}
-            className="px-3 py-2 text-[12px] font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {disabled ? 'Posting...' : 'Post'}
-          </button>
+        {(hasContent || disabled || onCancel) && (
+          <div className="flex items-center gap-2">
+            {onCancel && (
+              <button
+                onClick={onCancel}
+                disabled={disabled}
+                className="px-3 py-2 text-[12px] font-medium text-gray-500 hover:text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              onClick={handleSend}
+              disabled={disabled || !hasContent}
+              className="px-3 py-2 text-[12px] font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {disabled ? 'Posting...' : submitLabel}
+            </button>
+          </div>
         )}
       </div>
       {showMentionAutocomplete && workspaceId && (

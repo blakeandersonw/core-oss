@@ -3,6 +3,7 @@ import { EllipsisHorizontalIcon, PencilIcon, TrashIcon } from '@heroicons/react/
 import { avatarGradient } from '../../../utils/avatarGradient';
 import type { IssueComment, ContentBlock } from '../../../api/client';
 import { formatDistanceToNow } from 'date-fns';
+import CommentComposer from './CommentComposer';
 
 interface CommentItemProps {
   comment: IssueComment;
@@ -15,6 +16,15 @@ interface CommentItemProps {
 
 const QUICK_EMOJIS = ['👍', '❤️', '🎉', '👀', '🚀', '👎'];
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export default function CommentItem({
   comment,
   currentUserId,
@@ -25,7 +35,7 @@ export default function CommentItem({
 }: CommentItemProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [editText, setEditText] = useState('');
+  const [editInitialContent, setEditInitialContent] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const isOwn = comment.user_id === currentUserId;
@@ -41,6 +51,8 @@ export default function CommentItem({
       );
     }
 
+    const hasTextBlock = comment.blocks.some((block) => block.type === 'text');
+
     return comment.blocks.map((block, idx) => {
       if (block.type === 'text') {
         return (
@@ -50,9 +62,10 @@ export default function CommentItem({
         );
       }
       if (block.type === 'mention') {
+        if (hasTextBlock) return null;
         return (
           <span key={idx} className="text-blue-600 font-medium">
-            @{(block.data as { display_name?: string }).display_name || 'someone'}
+            @{(block.data as { display_name?: string; displayName?: string }).display_name || (block.data as { displayName?: string }).displayName || 'someone'}
           </span>
         );
       }
@@ -75,28 +88,26 @@ export default function CommentItem({
   };
 
   const startEdit = () => {
-    // Extract plain text for editing
-    const text = comment.blocks
-      .filter((b) => b.type === 'text')
+    const textBlocks = comment.blocks.filter((b) => b.type === 'text');
+    const html = textBlocks
+      .map((b) => (b.data as { html?: string }).html)
+      .find((value): value is string => typeof value === 'string' && value.length > 0);
+    const text = textBlocks
       .map((b) => (b.data as { content?: string }).content || '')
       .join('\n');
-    setEditText(text);
+    setEditInitialContent(html || `<p>${escapeHtml(text || comment.content || '')}</p>`);
     setIsEditing(true);
     setShowMenu(false);
   };
 
-  const saveEdit = () => {
-    if (!editText.trim()) return;
-    const blocks: ContentBlock[] = [
-      { type: 'text', data: { content: editText.trim() } },
-    ];
+  const saveEdit = (blocks: ContentBlock[]) => {
     onEdit(comment.id, blocks);
     setIsEditing(false);
   };
 
   const cancelEdit = () => {
     setIsEditing(false);
-    setEditText('');
+    setEditInitialContent('');
   };
 
   // Group reactions by emoji
@@ -165,28 +176,14 @@ export default function CommentItem({
 
         {/* Content */}
         {isEditing ? (
-          <div className="space-y-2">
-            <textarea
-              value={editText}
-              onChange={(e) => setEditText(e.target.value)}
-              className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-300 resize-none"
-              rows={3}
-              autoFocus
+          <div className="rounded-lg border border-gray-200 px-3">
+            <CommentComposer
+              onSend={saveEdit}
+              placeholder="Edit comment..."
+              initialContent={editInitialContent}
+              submitLabel="Save"
+              onCancel={cancelEdit}
             />
-            <div className="flex gap-2">
-              <button
-                onClick={saveEdit}
-                className="px-3 py-1.5 text-[12px] font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-800"
-              >
-                Save
-              </button>
-              <button
-                onClick={cancelEdit}
-                className="px-3 py-1.5 text-[12px] font-medium text-gray-500 hover:text-gray-700"
-              >
-                Cancel
-              </button>
-            </div>
           </div>
         ) : (
           <div className="text-[13px] text-gray-700 leading-relaxed">{renderContent()}</div>

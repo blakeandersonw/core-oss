@@ -164,6 +164,25 @@ class AgentHealthResponse(BaseModel):
     duration_seconds: Optional[float] = None
 
 
+class NotificationDigestResponse(BaseModel):
+    """Response for notification digest cron job."""
+    status: str
+    duration_seconds: Optional[float] = None
+    processed: int = 0
+    digests_sent: int = 0
+    rows_marked: int = 0
+    errors: int = 0
+
+
+class DueDateReminderResponse(BaseModel):
+    """Response for due-date reminder cron job."""
+    status: str
+    duration_seconds: Optional[float] = None
+    processed: int = 0
+    notifications_created: int = 0
+    errors: int = 0
+
+
 class CleanupResponse(BaseModel):
     """Response for cleanup cron jobs."""
     status: str
@@ -1465,6 +1484,75 @@ async def cron_agent_health(authorization: str = Header(None)):
         )
 
 
+@router.get("/notification-digest", response_model=NotificationDigestResponse)
+async def cron_notification_digest(authorization: Optional[str] = Header(None)):
+    """CRON JOB: Send grouped notification digest emails."""
+    logger.info("=" * 80)
+    logger.info("🕐 CRON: Starting notification digest")
+
+    if not verify_cron_auth(authorization):
+        logger.warning("Unauthorized cron attempt")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+    start_time = datetime.now(timezone.utc)
+    check_in_id = capture_checkin(monitor_slug="notification-digest", status=MonitorStatus.IN_PROGRESS)
+
+    try:
+        from api.services.notifications.digest import process_notification_digest
+
+        result = await process_notification_digest(batch_size=settings.digest_batch_size)
+        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+        capture_checkin(monitor_slug="notification-digest", check_in_id=check_in_id, status=MonitorStatus.OK)
+        return {
+            "status": "completed",
+            "duration_seconds": duration,
+            **result,
+        }
+    except Exception as e:
+        capture_checkin(monitor_slug="notification-digest", check_in_id=check_in_id, status=MonitorStatus.ERROR)
+        logger.error(f"CRON: Notification digest failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Notification digest failed: {str(e)}",
+        )
+
+
+@router.get("/due-date-reminders", response_model=DueDateReminderResponse)
+async def cron_due_date_reminders(authorization: Optional[str] = Header(None)):
+    """CRON JOB: Create due-date reminder notifications."""
+    logger.info("=" * 80)
+    logger.info("🕐 CRON: Starting due-date reminders")
+
+    if not verify_cron_auth(authorization):
+        logger.warning("Unauthorized cron attempt")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+    start_time = datetime.now(timezone.utc)
+    check_in_id = capture_checkin(monitor_slug="due-date-reminders", status=MonitorStatus.IN_PROGRESS)
+
+    try:
+        from api.services.projects.due_reminders import process_due_date_reminders
+
+        result = await process_due_date_reminders(
+            batch_size=settings.due_reminder_batch_size,
+            window_hours=settings.due_reminder_window_hours,
+        )
+        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+        capture_checkin(monitor_slug="due-date-reminders", check_in_id=check_in_id, status=MonitorStatus.OK)
+        return {
+            "status": "completed",
+            "duration_seconds": duration,
+            **result,
+        }
+    except Exception as e:
+        capture_checkin(monitor_slug="due-date-reminders", check_in_id=check_in_id, status=MonitorStatus.ERROR)
+        logger.error(f"CRON: Due-date reminders failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Due-date reminders failed: {str(e)}",
+        )
+
+
 @router.get("/health", response_model=CronHealthResponse)
 async def cron_health():
     """
@@ -1520,6 +1608,16 @@ async def cron_health():
                 "name": "agent-health",
                 "schedule": "Every 5 minutes",
                 "description": "Verifies running agent E2B sandboxes are healthy"
+            },
+            {
+                "name": "notification-digest",
+                "schedule": "Every hour",
+                "description": "Sends grouped email digests for unread project notifications"
+            },
+            {
+                "name": "due-date-reminders",
+                "schedule": "Every hour",
+                "description": "Creates reminders for assigned project issues due within the configured window"
             }
         ]
     }
