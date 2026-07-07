@@ -7,9 +7,8 @@ binding = "IMAGES"
 
 [[r2_buckets]]
 binding = "FILES_BUCKET"
-bucket_name = "starterstack-os-files"
-preview_bucket_name = "starterstack-os-files"
-remote = true
+bucket_name = "starterstack-agent-dev"
+preview_bucket_name = "starterstack-agent-dev"
 
 [vars]
 ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:3000"
