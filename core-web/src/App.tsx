@@ -608,7 +608,7 @@ function AppContent() {
   return (
     <AppLayout>
       <Routes>
-        {/* Core apps (not workspace-specific) */}
+        {/* StarterStack apps (not workspace-specific) */}
         <Route path="/chat" element={<ChatView />} />
         <Route path="/chat/:conversationId" element={<ChatView />} />
         <Route path="/email" element={<EmailView />} />

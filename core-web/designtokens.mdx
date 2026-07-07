@@ -1,10 +1,10 @@
 ---
-title: Core Design System
+title: StarterStack Design System
 description: LLM-readable token schema + usage rules
 ---
 
-export const coreDesignSystem = {
-  "name": "Core Design System",
+export const starterStackDesignSystem = {
+  "name": "StarterStack Design System",
   "mode": "Design System/Mode 1",
   "colors": {
     "Brand": {
@@ -391,13 +391,13 @@ export const coreDesignSystem = {
   }
 };
 
-# Core Design System (LLM Rules)
+# StarterStack Design System (LLM Rules)
 
 ## Hard rules
-1. Never invent values: use `coreDesignSystem.colors`, `spacing`, `radius`, `typography`.
+1. Never invent values: use `starterStackDesignSystem.colors`, `spacing`, `radius`, `typography`.
 2. Choose text/background colors by **semantic intent**, not by vibe.
 3. Use only token spacing (`xs/sm/md/lg/xl/xxl`) and radius (`sm/md/lg/full`).
-4. Typography must use the named styles in `coreDesignSystem.typography`.
+4. Typography must use the named styles in `starterStackDesignSystem.typography`.
 
 ## Notes
 - Gradient tokens are allowed only where explicitly defined (e.g., `exercise`).

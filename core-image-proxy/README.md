@@ -1,11 +1,11 @@
-# Core Image Proxy
+# StarterStack Image Proxy
 
 Cloudflare Worker that serves images from a private R2 bucket with HMAC-signed URLs, on-the-fly resizing, and CDN caching.
 
 ## What it does
 
 - Verifies HMAC signatures on incoming requests (prevents unauthorized access)
-- Fetches files from the private `core-os-files` R2 bucket via binding (zero network hop)
+- Fetches files from the private `starterstack-os-files` R2 bucket via binding (zero network hop)
 - Resizes images on-the-fly using Cloudflare Image Resizing (WebP thumbnails, previews)
 - Caches at 300+ Cloudflare edge locations via `Cache-Control` headers
 - CORS-enabled for allowed origins
@@ -41,7 +41,7 @@ Signed URLs are deterministic within a day and valid for 7 days.
 
 - [Node.js](https://nodejs.org/) 18+
 - [Wrangler](https://developers.cloudflare.com/workers/wrangler/) CLI (`npm install -g wrangler`)
-- Cloudflare account with the `core-os-files` R2 bucket
+- Cloudflare account with the `starterstack-os-files` R2 bucket
 
 ### Deploy
 

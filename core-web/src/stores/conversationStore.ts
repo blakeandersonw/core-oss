@@ -98,7 +98,7 @@ export const useConversationStore = create<ConversationState>()(
       },
     }),
     {
-      name: 'core-conversation-storage-v1',
+      name: 'starterstack-conversation-storage-v1',
       partialize: (state) => ({
         conversations: state.conversations,
         activeConversationId: state.activeConversationId,

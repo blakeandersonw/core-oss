@@ -1,4 +1,4 @@
-/* Core Design System Fonts */
+/* StarterStack Design System Fonts */
 @import url('https://fonts.googleapis.com/css2?family=Chivo+Mono:wght@400;500;600&display=swap');
 
 @import "tailwindcss";
@@ -19,7 +19,7 @@ p {
   scroll-behavior: smooth;
 }
 
-/* Core Design System - Tailwind Theme */
+/* StarterStack Design System - Tailwind Theme */
 @theme {
   /* Brand */
   --color-brand-primary: #000000;
@@ -178,7 +178,7 @@ html {
   overflow: hidden;
 }
 
-/* Core Design System - Button Base Styles */
+/* StarterStack Design System - Button Base Styles */
 .btn {
   height: 48px;
   padding-left: 16px;

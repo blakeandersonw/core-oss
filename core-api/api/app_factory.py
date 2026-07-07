@@ -213,7 +213,7 @@ def create_full_app() -> FastAPI:
     app = _create_base_app(
         service_name="core-api",
         description="FastAPI backend for the all-in-one productivity app",
-        root_message="Core Productivity API is running",
+        root_message="StarterStack Productivity API is running",
         include_cors=True,
         include_rate_limit=True,
     )
@@ -253,7 +253,7 @@ def create_webhooks_app() -> FastAPI:
     app = _create_base_app(
         service_name="core-webhooks",
         description="Dedicated public webhook ingress for provider notifications",
-        root_message="Core webhook ingress is running",
+        root_message="StarterStack webhook ingress is running",
         include_cors=False,
         include_rate_limit=False,
     )

@@ -599,7 +599,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
     }),
     {
-      name: 'core-workspace-storage-v4',
+      name: 'starterstack-workspace-storage-v4',
       partialize: (state) => ({
         // Persist full workspace data for instant load
         activeWorkspaceId: state.activeWorkspaceId,

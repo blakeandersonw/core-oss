@@ -2,7 +2,7 @@
 Tests for OAuth token encryption at rest.
 
 Covers:
-- Core encrypt/decrypt module (lib/token_encryption.py)
+- StarterStack encrypt/decrypt module (lib/token_encryption.py)
 - Integration with write paths (encrypt before DB write)
 - Integration with read paths (decrypt after DB read)
 - Migration script logic
@@ -49,7 +49,7 @@ def _patch_settings(**overrides):
 
 
 # ===========================================================================
-# Core Module Tests — lib/token_encryption.py
+# StarterStack Module Tests — lib/token_encryption.py
 # ===========================================================================
 
 class TestEncryptDecryptRoundtrip:

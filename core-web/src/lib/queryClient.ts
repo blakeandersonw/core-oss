@@ -24,7 +24,7 @@ export function getQueryPersister() {
   if (!_queryPersister && typeof window !== 'undefined') {
     _queryPersister = createSyncStoragePersister({
       storage: window.localStorage,
-      key: 'core-react-query-cache',
+      key: 'starterstack-react-query-cache',
     });
   }
   return _queryPersister;

@@ -1,5 +1,5 @@
 /**
- * Core Image Proxy Worker
+ * StarterStack Image Proxy Worker
  *
  * Serves files from a private R2 bucket with:
  * - HMAC-signed URL verification (Discord-style deterministic signatures)

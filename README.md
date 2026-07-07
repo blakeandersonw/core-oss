@@ -1,8 +1,8 @@
-# Core
+# StarterStack
 
-Open-source, all-in-one productivity platform. Email, calendar, chat (AI), messages, files, projects, and dashboard — in a single app.
+StarterStack is an open-source, all-in-one productivity platform. Email, calendar, chat (AI), messages, files, projects, and dashboard — in a single app.
 
-**Core** is a monorepo with three packages:
+**StarterStack** is a monorepo with three packages:
 
 - **[core-api](./core-api)** — Python/FastAPI backend
 - **[core-web](./core-web)** — React/Vite frontend
@@ -110,7 +110,7 @@ core-oss/
 
 ## Service Dependencies
 
-Core is designed to run with **just Supabase** for local development. Additional services unlock more features, and most can be swapped for self-hosted or alternative providers.
+StarterStack is designed to run with **just Supabase** for local development. Additional services unlock more features, and most can be swapped for self-hosted or alternative providers.
 
 | Service | Required | What it enables | Without it | Self-hosted / Alternatives |
 |---------|----------|----------------|------------|---------------------------|

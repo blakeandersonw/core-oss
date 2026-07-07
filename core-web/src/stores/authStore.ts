@@ -544,7 +544,7 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: 'core-auth-storage',
+      name: 'starterstack-auth-storage',
       partialize: (state) => ({
         // Persist isAuthenticated as a hint for instant redirect on page load
         isAuthenticated: state.isAuthenticated,

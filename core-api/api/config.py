@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
     
     # App metadata
-    app_name: str = "Core Productivity API"
+    app_name: str = "StarterStack Productivity API"
     app_version: str = "1.0.0"
     debug: bool = False
     
@@ -189,7 +189,7 @@ class Settings(BaseSettings):
     r2_account_id: str = ""
     r2_access_key_id: str = ""
     r2_secret_access_key: str = ""
-    r2_bucket_name: str = "core-os-files"
+    r2_bucket_name: str = "starterstack-os-files"
     r2_s3_api: str = ""  # e.g., https://<account_id>.r2.cloudflarestorage.com
     r2_presigned_url_expiry: int = 604800  # 7 days in seconds (for downloads)
     r2_max_file_size: int = 52428800  # 50MB in bytes
@@ -204,7 +204,7 @@ class Settings(BaseSettings):
         return self.r2_public_url
 
     # Cloudflare R2 public bucket (for avatars)
-    r2_public_bucket: str = "core-public"  # Public bucket name
+    r2_public_bucket: str = "starterstack-public"  # Public bucket name
     r2_public_access_url: str = ""  # Public r2.dev URL, e.g., https://pub-xxx.r2.dev
 
     # Image proxy (Cloudflare Worker)

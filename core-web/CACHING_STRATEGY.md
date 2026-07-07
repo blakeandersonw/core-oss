@@ -41,11 +41,11 @@ preload(appId?) {
 
 | Store | Persist Key | Scope | Preload Strategy |
 |-------|-------------|-------|-----------------|
-| emailStore | `core-email-storage-v4` | Global | INBOX + all folders + all accounts |
-| calendarStore | `core-calendar-storage-v2` | Global | All events (single fetch) |
+| emailStore | `starterstack-email-storage-v5` | Global | INBOX + all folders + all accounts |
+| calendarStore | `starterstack-calendar-storage-v2` | Global | All events (single fetch) |
 | messagesStore | `messages-workspace-cache-v2` | Per-workspace | Channels + all channel messages |
-| filesStore | `core-files-storage-v1` | Per-workspace | Root folder documents |
-| projectsStore | `core-projects-storage-v2` | Per-workspace | All boards + all board data |
+| filesStore | `starterstack-files-storage-v2` | Per-workspace | Root folder documents |
+| projectsStore | `starterstack-projects-storage-v3` | Per-workspace | All boards + all board data |
 
 ## Staleness Threshold
 

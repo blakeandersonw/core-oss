@@ -1,6 +1,6 @@
 # core-web
 
-React + TypeScript web app for Core — the all-in-one productivity platform.
+React + TypeScript web app for StarterStack — the all-in-one productivity platform.
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

@@ -1,4 +1,4 @@
--- Migration: Core Tables
+-- Migration: StarterStack Tables
 -- Creates foundational user-facing tables: users, ext_connections, push_subscriptions,
 -- user_preferences. Includes PKs, FKs, indexes, RLS policies, triggers, and grants.
 

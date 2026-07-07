@@ -142,7 +142,7 @@ export const useAgentConversationStore = create<AgentConversationState>()(
       },
     }),
     {
-      name: 'core-agent-conversation-storage-v1',
+      name: 'starterstack-agent-conversation-storage-v1',
       partialize: (state) => ({
         currentAgentId: state.currentAgentId,
       }),

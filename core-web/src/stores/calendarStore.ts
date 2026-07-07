@@ -1060,7 +1060,7 @@ export const useCalendarStore = create<CalendarState>()(
       },
     }),
     {
-      name: "core-calendar-storage-v2",
+      name: "starterstack-calendar-storage-v2",
       partialize: (state) => ({
         // Persist UI preferences and events data for instant load
         // Note: selectedDate is NOT persisted - calendar always starts at today

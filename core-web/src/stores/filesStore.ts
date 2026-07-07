@@ -1537,7 +1537,7 @@ export const useFilesStore = create<FilesState>()(
   },
     }),
     {
-      name: 'core-files-storage-v2',
+      name: 'starterstack-files-storage-v2',
       storage: {
         getItem: (name) => {
           const value = localStorage.getItem(name);

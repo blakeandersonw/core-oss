@@ -403,12 +403,12 @@ Think of it as your unified hub for work — where everything connects and your 
 
 ---
 
-## Core Features
+## StarterStack Features
 
 - **Messaging** — Team channels for real-time discussions
 - **Projects Board** — Organize and track your work with a visual project board
 - **Files** — Upload, manage, and organize your files — including docs and notes that live right inside your file system
-- **Email** — Search, read, and send emails right from Core
+- **Email** — Search, read, and send emails right from StarterStack
 - **Calendar** — View, create, and manage your events
 - **StarterStack Agent** — An AI assistant that can search across all your data, answer questions, and take actions on your behalf
 

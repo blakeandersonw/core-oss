@@ -14,7 +14,7 @@ export const useProductStore = create<ProductState>()(
       setActiveProductType: (type) => set({ activeProductType: type }),
     }),
     {
-      name: 'core-product-storage-v1',
+      name: 'starterstack-product-storage-v1',
       partialize: (state) => ({
         activeProductType: state.activeProductType,
       }),

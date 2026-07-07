@@ -55,7 +55,7 @@ class ContentBuilder:
 ```
 
 ```swift
-// iOS: Core/Features/Chat/IOSContentBuilder.swift
+// iOS: StarterStack/Features/Chat/IOSContentBuilder.swift
 class IOSContentBuilder {
     func addDisplay(_ content: DisplayContent) {
         flushText()  // CRITICAL: Flush accumulated text first!
@@ -241,8 +241,8 @@ core-api-block-schema/
 └── docs/
     └── CONTENT_PARTS_SCHEMA.md        # This file
 
-core-ios-block-schema/
-└── Core/
+starterstack-ios-block-schema/
+└── StarterStack/
     ├── ChatModels.swift               # ContentPart enum, data types
     ├── ContentView.swift              # Uses IOSContentBuilder for streaming
     └── Features/

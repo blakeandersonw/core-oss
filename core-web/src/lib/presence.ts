@@ -12,7 +12,7 @@ type RealtimePresenceSnapshot<T extends object> = Record<
   Array<{ presence_ref?: string } & T>
 >;
 
-const PRESENCE_SESSION_STORAGE_KEY = "core.presence_session_id";
+const PRESENCE_SESSION_STORAGE_KEY = "starterstack.presence_session_id";
 
 let memoryPresenceSessionId: string | null = null;
 

@@ -1,6 +1,6 @@
 # core-api
 
-FastAPI backend for Core — the all-in-one productivity platform.
+FastAPI backend for StarterStack — the all-in-one productivity platform.
 
 ## Quick Start
 
@@ -42,7 +42,7 @@ ENV_FILE=.env.test make start
 Create a `.env` file with these variables:
 
 ```env
-# Core Settings
+# StarterStack Settings
 API_ENV=development
 DEBUG=False
 
@@ -77,7 +77,7 @@ RESEND_FROM_DOMAIN=yourdomain.com
 # Local dev:
 FRONTEND_URL=http://localhost:3000
 # Production:
-# FRONTEND_URL=https://core.so
+# FRONTEND_URL=https://starterstack.ai
 
 # CORS (comma-separated for additional origins)
 # ALLOWED_ORIGINS_ENV=https://yourapp.vercel.app
@@ -176,7 +176,7 @@ See the full guide in [`docs/CONTENT_PARTS_SCHEMA.md`](docs/CONTENT_PARTS_SCHEMA
 
 ## Available Endpoints
 
-### Core
+### StarterStack API
 - `GET /` - Health check
 - `GET /api/health` - Detailed health status
 

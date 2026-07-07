@@ -13,7 +13,7 @@ help:
 	@echo "  make clean     - Clean up cache files"
 
 start:
-	@echo "🚀 Starting Core API..."
+	@echo "🚀 Starting StarterStack API..."
 	@uv run python dev.py
 
 install:

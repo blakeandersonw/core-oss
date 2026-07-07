@@ -901,7 +901,7 @@ export const useEmailStore = create<EmailState>()(
       },
     }),
     {
-      name: 'core-email-storage-v5',  // Bumped version for slimmed down store
+      name: 'starterstack-email-storage-v5',  // Bumped version for slimmed down store
       partialize: (state) => ({
         // Only persist UI preferences
         activeFolder: state.activeFolder,

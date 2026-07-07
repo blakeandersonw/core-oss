@@ -192,7 +192,7 @@ export const useProjectsStore = create<ProjectsState>()(
       },
     }),
     {
-      name: 'core-projects-storage-v3', // Increment version to avoid conflicts
+      name: 'starterstack-projects-storage-v3', // Increment version to avoid conflicts
       partialize: (state) => ({
         showArchived: state.showArchived,
         filters: normalizeProjectFilters(state.filters),

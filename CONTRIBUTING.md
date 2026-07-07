@@ -1,4 +1,4 @@
-# Contributing to Core
+# Contributing to StarterStack
 
 Thanks for your interest in contributing! This guide will help you get started.
 

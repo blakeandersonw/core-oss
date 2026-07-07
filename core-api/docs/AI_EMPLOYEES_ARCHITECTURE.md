@@ -502,7 +502,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...
 **File:** `core-agent/v2/main.py`
 ```python
 """
-Core Agent — polls agent_tasks and runs agent loops in E2B sandboxes.
+StarterStack Agent — polls agent_tasks and runs agent loops in E2B sandboxes.
 """
 import asyncio
 import logging
@@ -635,7 +635,7 @@ class TaskRunner:
 **File:** `core-agent/v2/runtime/agent_loop.py`
 ```python
 """
-Core agent loop: materialize context → spin up E2B → LLM tool loop → post reply.
+StarterStack agent loop: materialize context → spin up E2B → LLM tool loop → post reply.
 """
 import json
 import logging

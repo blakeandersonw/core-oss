@@ -1,5 +1,5 @@
 """
-Core API package
+StarterStack API package
 """
 
 

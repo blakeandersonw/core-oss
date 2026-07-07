@@ -211,7 +211,7 @@ export const useBuilderStore = create<BuilderState>()(
       },
     }),
     {
-      name: 'core-builder-storage-v1',
+      name: 'starterstack-builder-storage-v1',
       partialize: (state) => ({
         activeProjectId: state.activeProjectId,
         viewMode: state.viewMode,

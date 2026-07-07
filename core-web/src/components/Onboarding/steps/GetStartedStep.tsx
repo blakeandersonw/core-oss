@@ -29,7 +29,7 @@ export default function GetStartedStep({ onNext }: GetStartedStepProps) {
           className="absolute inset-0 blur-2xl bg-gradient-to-br from-gray-200 to-gray-300 rounded-full scale-150 opacity-60"
         />
         <img
-          src="/CoreLogo.png"
+          src="/StarterStackLogo.png"
           alt="StarterStack"
           className="relative w-20 h-20"
         />

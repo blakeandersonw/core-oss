@@ -191,7 +191,7 @@ export default function LandingPage() {
       {/* ────────── Header ────────── */}
       <nav className="shrink-0 px-6 sm:px-12 lg:px-40 h-16 flex items-center justify-between max-w-[1400px] mx-auto w-full">
         <div className="flex items-center gap-2.5">
-          <img src="/CoreLogo.png" alt="StarterStack" className="w-7 h-7" />
+          <img src="/StarterStackLogo.png" alt="StarterStack" className="w-7 h-7" />
           <span className="font-semibold text-[17px] text-text-body tracking-tight">StarterStack</span>
         </div>
         <button
@@ -334,7 +334,7 @@ export default function LandingPage() {
                               <div className="flex-1 px-1.5">
                                 <div className="text-[6px] font-medium text-text-tertiary uppercase px-1 mb-0.5">Channels</div>
                                 <div className="space-y-px">
-                                  {["general", "core-app", "design", "random"].map((ch, i) => (
+                                  {["general", "starterstack-app", "design", "random"].map((ch, i) => (
                                     <div key={ch} className={`px-1.5 py-1 rounded text-[8px] ${i === 0 ? 'bg-white font-medium' : 'text-text-secondary'}`}>
                                       # {ch}
                                     </div>

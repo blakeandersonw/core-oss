@@ -7,8 +7,8 @@ binding = "IMAGES"
 
 [[r2_buckets]]
 binding = "FILES_BUCKET"
-bucket_name = "core-os-files"
-preview_bucket_name = "core-os-files"
+bucket_name = "starterstack-os-files"
+preview_bucket_name = "starterstack-os-files"
 remote = true
 
 [vars]

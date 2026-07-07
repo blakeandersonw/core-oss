@@ -394,7 +394,7 @@ async def workspace_mcp_manifest(workspace_id: str, scopes: List[str]) -> Dict[s
     ]
     return {
         "workspace_id": workspace_id,
-        "name": "Core Workspace MCP",
+        "name": "StarterStack Workspace MCP",
         "version": "2026-07-04",
         "tools": tools,
         "resources": [

@@ -1,5 +1,5 @@
 """
-Core notification creation — any service calls these functions.
+StarterStack notification creation — any service calls these functions.
 
 Uses async service role client for inserts (bypasses RLS) since we're writing
 notifications on behalf of other users (fan-out).

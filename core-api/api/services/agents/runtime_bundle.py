@@ -1,8 +1,8 @@
 """
 Embedded agent runtime files for upload into E2B sandboxes.
 
-Since core-api deploys on Vercel (serverless), it can't read files from the
-core-agent repo at runtime. This module contains all runtime file contents
+Since core-api deploys on Vercel (serverless), it can't read runtime files
+from a separate agent service at runtime. This module contains those contents
 as string constants so dispatch.py can upload them into new sandboxes.
 """
 from typing import Dict
@@ -509,7 +509,7 @@ class TaskWatcher:
 
 MAIN_PY = r'''
 """
-Core Agent Runtime — Entry point.
+StarterStack Agent Runtime — Entry point.
 Runs inside an E2B sandbox. Watches for task files, runs Claude agent loops,
 reports steps back to Supabase in real-time.
 """
@@ -569,7 +569,7 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     stream=sys.stdout,
 )
-logger = logging.getLogger("core-agent")
+logger = logging.getLogger("starterstack-agent")
 
 
 def get_supabase():
@@ -778,7 +778,7 @@ def extract_memories(instruction: str, response: str):
 
 def main():
     boot_start = time.perf_counter()
-    logger.info(f"Core Agent Runtime starting (agent_id={config.AGENT_ID})")
+    logger.info(f"StarterStack Agent Runtime starting (agent_id={config.AGENT_ID})")
 
     t0 = time.perf_counter()
     supabase = get_supabase()

@@ -957,7 +957,7 @@ export default function Sidebar() {
                   <Icon icon={ExternalLink} size={20} className="text-text-body" />
                 ) : selectedView === "dashboard" ? (
                   <img
-                    src="/CoreLogo.png"
+                    src="/StarterStackLogo.png"
                     alt="Personal"
                     className="w-5 h-5"
                   />
@@ -1038,7 +1038,7 @@ export default function Sidebar() {
                     : "hover:bg-bg-gray"
                 }`}
               >
-                <img src="/CoreLogo.png" alt="Personal" className="w-5 h-5" />
+                <img src="/StarterStackLogo.png" alt="Personal" className="w-5 h-5" />
                 <span className="font-semibold">Personal</span>
               </button>
               <div className="mx-1 my-0.5 border-t border-border-light" />
