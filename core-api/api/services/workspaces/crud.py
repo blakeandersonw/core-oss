@@ -389,28 +389,28 @@ async def delete_workspace(
         raise
 
 
-WELCOME_NOTE_CONTENT = """# Welcome to StarterStack! 👋
+WELCOME_NOTE_CONTENT = """# Welcome to StarterStack.ai! 👋
 
 Everything you need. In one place.
 
 ---
 
-## What is StarterStack?
+## What is StarterStack.ai?
 
-StarterStack is an all-in-one productivity workspace that brings together your email, calendar, projects, files, and team messaging — all powered by an AI agent that helps you get things done faster.
+StarterStack.ai is an all-in-one productivity workspace that brings together your email, calendar, projects, files, and team messaging — all powered by an AI agent that helps you get things done faster.
 
-Think of it as your unified hub for work — where everything connects and your AI assistant (the StarterStack Agent) understands your full context.
+Think of it as your unified hub for work — where everything connects and your AI assistant (the StarterStack.ai Agent) understands your full context.
 
 ---
 
-## StarterStack Features
+## StarterStack.ai Features
 
 - **Messaging** — Team channels for real-time discussions
 - **Projects Board** — Organize and track your work with a visual project board
 - **Files** — Upload, manage, and organize your files — including docs and notes that live right inside your file system
-- **Email** — Search, read, and send emails right from StarterStack
+- **Email** — Search, read, and send emails right from StarterStack.ai
 - **Calendar** — View, create, and manage your events
-- **StarterStack Agent** — An AI assistant that can search across all your data, answer questions, and take actions on your behalf
+- **StarterStack.ai Agent** — An AI assistant that can search across all your data, answer questions, and take actions on your behalf
 
 ---
 
@@ -434,7 +434,7 @@ Think of it as your unified hub for work — where everything connects and your 
 
 ## Need Help?
 
-The StarterStack Agent is always here to help! Just ask it questions about your workspace, find information, or get things done.
+The StarterStack.ai Agent is always here to help! Just ask it questions about your workspace, find information, or get things done.
 
 ---
 
@@ -470,7 +470,7 @@ async def _create_welcome_note(
         "user_id": user_id,
         "workspace_app_id": files_app_id,
         "workspace_id": workspace_id,
-        "title": "Welcome to StarterStack!",
+        "title": "Welcome to StarterStack.ai!",
         "content": WELCOME_NOTE_CONTENT,
         "icon": "\U0001f44b",
         "type": "note",
