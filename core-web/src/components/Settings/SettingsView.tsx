@@ -7,6 +7,7 @@ import Modal from '../Modal/Modal';
 import { uploadAvatar, deleteAvatar } from '../../api/client';
 import { ConnectionsList } from '../Connections/ConnectionsList';
 import { emailAccountToConnection } from '../Connections/types';
+import { resolveUploadMimeType } from '../../utils/uploadMime';
 
 interface SettingsViewProps {
   isOpen: boolean;
@@ -75,8 +76,10 @@ export default function SettingsView({ isOpen, onClose }: SettingsViewProps) {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const mimeType = resolveUploadMimeType(file);
+
     // Validate file type
-    if (!file.type.startsWith('image/')) {
+    if (!mimeType.startsWith('image/')) {
       setAvatarError('Please select an image file');
       return;
     }
@@ -95,8 +98,8 @@ export default function SettingsView({ isOpen, onClose }: SettingsViewProps) {
     setAvatarUploading(true);
 
     try {
-      console.log('Starting avatar upload...', { name: file.name, type: file.type, size: file.size });
-      const avatarUrl = await uploadAvatar(file);
+      console.log('Starting avatar upload...', { name: file.name, type: mimeType, size: file.size });
+      const avatarUrl = await uploadAvatar(file, mimeType);
       console.log('Avatar upload complete:', avatarUrl);
       updateAvatarUrl(avatarUrl);
       setAvatarPreview(null); // Clear preview, use actual URL

@@ -16,20 +16,36 @@ from lib.filename_utils import sanitize_filename
 logger = logging.getLogger(__name__)
 
 
+class R2ConfigurationError(RuntimeError):
+    """Raised when R2 storage is not configured enough to perform uploads."""
+
+
+def _require_setting(value: str, name: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        raise R2ConfigurationError("Storage upload is not configured")
+    if name == "R2_S3_API" and not value.startswith(("http://", "https://")):
+        raise R2ConfigurationError("Storage upload is not configured")
+    return value
+
+
 class R2Client:
     """Cloudflare R2 storage client using S3-compatible API"""
 
     def __init__(self):
-        self.bucket_name = settings.r2_bucket_name
+        self.bucket_name = _require_setting(settings.r2_bucket_name, "R2_BUCKET_NAME")
         self.presigned_url_expiry = settings.r2_presigned_url_expiry
         self.max_file_size = settings.r2_max_file_size
+        endpoint_url = _require_setting(settings.r2_s3_api, "R2_S3_API")
+        access_key_id = _require_setting(settings.r2_access_key_id, "R2_ACCESS_KEY_ID")
+        secret_access_key = _require_setting(settings.r2_secret_access_key, "R2_SECRET_ACCESS_KEY")
 
         # Initialize S3 client for R2
         self.s3_client = boto3.client(
             's3',
-            endpoint_url=settings.r2_s3_api,
-            aws_access_key_id=settings.r2_access_key_id,
-            aws_secret_access_key=settings.r2_secret_access_key,
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
             config=Config(signature_version='s3v4'),
             region_name='auto'  # R2 uses 'auto' for region
         )
@@ -148,7 +164,7 @@ class R2Client:
         Returns:
             True if successful
         """
-        target_bucket = bucket or self.bucket_name
+        target_bucket = _require_setting(bucket or self.bucket_name, "R2_BUCKET_NAME")
         try:
             self.s3_client.delete_object(
                 Bucket=target_bucket,
@@ -172,7 +188,7 @@ class R2Client:
         Returns:
             True if file exists
         """
-        target_bucket = bucket or self.bucket_name
+        target_bucket = _require_setting(bucket or self.bucket_name, "R2_BUCKET_NAME")
         try:
             self.s3_client.head_object(
                 Bucket=target_bucket,
@@ -231,7 +247,7 @@ class R2Client:
         if expiration is None:
             expiration = settings.r2_upload_url_expiry
 
-        target_bucket = bucket or self.bucket_name
+        target_bucket = _require_setting(bucket or self.bucket_name, "R2_BUCKET_NAME")
 
         try:
             url = self.s3_client.generate_presigned_url(

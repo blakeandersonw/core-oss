@@ -2730,12 +2730,12 @@ export async function updateUserProfile(
 /**
  * Upload avatar image - handles the full presigned URL flow
  */
-export async function uploadAvatar(file: File): Promise<string> {
+export async function uploadAvatar(file: File, contentType: string = file.type): Promise<string> {
   // 1. Get presigned URL
   console.log('1. Getting presigned URL...');
   const { upload_url, r2_key, public_url } = await initiateAvatarUpload(
     file.name,
-    file.type,
+    contentType,
     file.size
   );
   console.log('2. Got presigned URL:', { r2_key, public_url });
@@ -2746,7 +2746,7 @@ export async function uploadAvatar(file: File): Promise<string> {
     method: 'PUT',
     body: file,
     headers: {
-      'Content-Type': file.type,
+      'Content-Type': contentType,
     },
   });
 

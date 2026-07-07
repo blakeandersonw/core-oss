@@ -35,6 +35,73 @@ SUPPORTED_PROVIDERS = ["google", "microsoft"]
 _ALLOWED_AVATAR_TYPES = {"image/png", "image/jpeg"}
 
 
+def normalize_provider_email(email: Optional[str]) -> str:
+    """Normalize provider email for duplicate detection."""
+    return (email or "").strip().lower()
+
+
+def _safe_account_order(row: Dict[str, Any]) -> int:
+    try:
+        return int(row.get("account_order") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def dedupe_active_email_account_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return one active account row per mailbox, preferring primary/lowest order."""
+    sorted_rows = sorted(
+        [row for row in rows if row.get("is_active", True)],
+        key=lambda row: (
+            not bool(row.get("is_primary")),
+            _safe_account_order(row),
+            str(row.get("created_at") or ""),
+            str(row.get("id") or ""),
+        ),
+    )
+    seen: set[str] = set()
+    deduped: List[Dict[str, Any]] = []
+    for row in sorted_rows:
+        normalized_email = normalize_provider_email(row.get("provider_email"))
+        key = normalized_email or f"{row.get('provider')}:{row.get('id')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return sorted(deduped, key=_safe_account_order)
+
+
+def email_account_response_from_row(
+    row: Dict[str, Any],
+    *,
+    verification_status: Optional[str] = None,
+    last_verified_at: Optional[str] = None,
+    error_reason: Optional[str] = None,
+    scopes: Optional[List[str]] = None,
+    external_account_id: Optional[str] = None,
+    unverified: Optional[bool] = None,
+) -> Dict[str, Any]:
+    metadata = row.get("metadata") or {}
+    is_active = row.get("is_active", True)
+    response: Dict[str, Any] = {
+        "id": row["id"],
+        "provider": row.get("provider", "google"),
+        "provider_email": row.get("provider_email"),
+        "provider_name": metadata.get("full_name") or metadata.get("name"),
+        "provider_avatar": metadata.get("picture") or metadata.get("avatar_url"),
+        "is_primary": row.get("is_primary", False),
+        "account_order": row.get("account_order", 0),
+        "is_active": is_active,
+        "verification_status": verification_status or row.get("verification_status") or ("connected" if is_active else "disconnected"),
+        "last_verified_at": last_verified_at if last_verified_at is not None else row.get("last_verified_at"),
+        "error_reason": error_reason if error_reason is not None else row.get("error_reason"),
+        "scopes": scopes if scopes is not None else (row.get("scopes") or []),
+        "external_account_id": external_account_id if external_account_id is not None else row.get("external_account_id"),
+    }
+    if unverified is not None:
+        response["unverified"] = unverified
+    return response
+
+
 def _run_inline_google_initial_sync(
     *,
     connection_id: str,
@@ -744,32 +811,17 @@ class AuthService:
         result = auth_supabase.table('ext_connections')\
             .select(
                 'id, provider, provider_email, is_primary, account_order, is_active, metadata, '
-                'scopes, external_account_id, verification_status, last_verified_at, error_reason'
+                'scopes, external_account_id, verification_status, last_verified_at, error_reason, created_at'
             )\
             .eq('user_id', user_id)\
             .in_('provider', SUPPORTED_PROVIDERS)\
+            .eq('is_active', True)\
             .order('account_order')\
             .execute()
 
         accounts = []
-        for conn in result.data or []:
-            metadata = conn.get('metadata') or {}
-            provider = conn.get('provider', 'google')
-            accounts.append({
-                'id': conn['id'],
-                'provider': provider,
-                'provider_email': conn['provider_email'],
-                'provider_name': metadata.get('full_name') or metadata.get('name'),
-                'provider_avatar': metadata.get('picture') or metadata.get('avatar_url'),
-                'is_primary': conn.get('is_primary', False),
-                'account_order': conn.get('account_order', 0),
-                'is_active': conn['is_active'],
-                'verification_status': conn.get('verification_status') or ('connected' if conn.get('is_active') else 'disconnected'),
-                'last_verified_at': conn.get('last_verified_at'),
-                'error_reason': conn.get('error_reason'),
-                'scopes': conn.get('scopes') or [],
-                'external_account_id': conn.get('external_account_id'),
-            })
+        for conn in dedupe_active_email_account_rows(result.data or []):
+            accounts.append(email_account_response_from_row(conn))
 
         return accounts
 
@@ -833,14 +885,12 @@ class AuthService:
         if not provider_email:
             raise ValueError("Could not determine email for account")
 
-        # Check for duplicate ACTIVE account (allow re-adding if previously hard-deleted)
-        existing = auth_supabase.table('ext_connections')\
-            .select('id')\
-            .eq('user_id', user_id)\
-            .eq('provider_email', provider_email)\
-            .eq('is_active', True)\
-            .execute()
-        if existing.data:
+        normalized_provider_email = normalize_provider_email(provider_email)
+        if not normalized_provider_email:
+            raise ValueError("Could not determine email for account")
+
+        existing_accounts = AuthService.get_email_accounts(user_id, user_jwt)
+        if any(normalize_provider_email(account.get("provider_email")) == normalized_provider_email for account in existing_accounts):
             raise ValueError("This email account is already connected")
 
         # Note: We use upsert below to handle the case where the account

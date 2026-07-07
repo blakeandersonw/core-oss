@@ -8,7 +8,7 @@ from api.dependencies import get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
 from api.config import settings
 from api.super_admin import is_super_admin_email
-from lib.r2_client import get_r2_client
+from lib.r2_client import R2ConfigurationError, get_r2_client
 from lib.supabase_client import get_service_role_client
 import logging
 
@@ -186,6 +186,11 @@ async def initiate_avatar_upload(
             expires_at=presigned["expires_at"]
         )
 
+    except R2ConfigurationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
     except Exception as e:
         handle_api_exception(e, "Failed to initiate avatar upload", logger)
 

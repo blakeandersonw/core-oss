@@ -196,6 +196,7 @@ export default function Sidebar() {
   const [formIconUrl, setFormIconUrl] = useState<string | null>(null);
   const [formIconR2Key, setFormIconR2Key] = useState<string | null>(null);
   const [isUploadingIcon, setIsUploadingIcon] = useState(false);
+  const [iconUploadError, setIconUploadError] = useState<string | null>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
   const [editingApps, setEditingApps] = useState<
     { id: string; type: string; name: string }[]
@@ -441,6 +442,7 @@ export default function Sidebar() {
       setFormEmoji(workspace.emoji || "");
       setFormIconUrl(workspace.icon_url || null);
       setFormIconR2Key(workspace.icon_r2_key || null);
+      setIconUploadError(null);
       setWorkspaceSettingsTab(tab);
       setModalType("workspaceSettings");
       setOpenMenu(null);
@@ -534,6 +536,8 @@ export default function Sidebar() {
     setFormName("");
     setFormEmoji("");
     setFormIconUrl(null);
+    setFormIconR2Key(null);
+    setIconUploadError(null);
     setEditingApps([]);
     setIsCreatingWorkspace(false);
     setIsSaving(false);
@@ -592,10 +596,11 @@ export default function Sidebar() {
 
     const mimeType = resolveUploadMimeType(file);
     if (!mimeType.startsWith("image/")) {
-      console.error("Invalid file type");
+      setIconUploadError("Please select an image file");
       return;
     }
 
+    setIconUploadError(null);
     setIsUploadingIcon(true);
     try {
       if (!selectedWorkspaceId) {
@@ -609,6 +614,7 @@ export default function Sidebar() {
       setFormEmoji("");
     } catch (err) {
       console.error("Failed to upload icon:", err);
+      setIconUploadError(err instanceof Error ? err.message : "Failed to upload workspace logo");
     } finally {
       setIsUploadingIcon(false);
       if (e.target) e.target.value = "";
@@ -2099,6 +2105,9 @@ export default function Sidebar() {
                     </button>
                   )}
                 </div>
+                {iconUploadError && (
+                  <p className="mt-2 pl-[50px] text-[11px] text-red-500">{iconUploadError}</p>
+                )}
               </div>
 
               {/* Workspace Info */}

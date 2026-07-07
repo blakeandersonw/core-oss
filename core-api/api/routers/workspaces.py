@@ -30,7 +30,7 @@ from api.services.users import search_users_by_email
 from api.dependencies import get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
 from lib.image_proxy import generate_image_url
-from lib.r2_client import get_r2_client
+from lib.r2_client import R2ConfigurationError, get_r2_client
 import logging
 
 logger = logging.getLogger(__name__)
@@ -492,6 +492,11 @@ async def initiate_workspace_icon_upload(
         )
     except HTTPException:
         raise
+    except R2ConfigurationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
     except Exception as e:
         handle_api_exception(e, "Failed to initiate workspace icon upload", logger)
 

@@ -6,7 +6,12 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
-from api.services.auth import AuthService
+from api.services.auth import (
+    AuthService,
+    dedupe_active_email_account_rows,
+    email_account_response_from_row,
+    normalize_provider_email,
+)
 from api.services.composio import (
     create_connect_link,
     get_connected_account_profile,
@@ -890,28 +895,21 @@ async def verify_email_accounts(
         .select("*")\
         .eq("user_id", current_user_id)\
         .in_("provider", ["google", "microsoft"])\
+        .eq("is_active", True)\
         .execute()
 
     accounts = []
-    for row in result.data or []:
+    for row in dedupe_active_email_account_rows(result.data or []):
         health = await _verify_and_persist_ext_connection(service_supabase, row)
-        metadata = row.get("metadata") or {}
-        accounts.append({
-            "id": row["id"],
-            "provider": row.get("provider", "google"),
-            "provider_email": row.get("provider_email"),
-            "provider_name": metadata.get("full_name") or metadata.get("name"),
-            "provider_avatar": metadata.get("picture") or metadata.get("avatar_url"),
-            "is_primary": row.get("is_primary", False),
-            "account_order": row.get("account_order", 0),
-            "is_active": row.get("is_active", True),
-            "verification_status": health.status,
-            "last_verified_at": health.last_verified_at,
-            "error_reason": health.error_reason,
-            "scopes": health.scopes or row.get("scopes") or [],
-            "external_account_id": row.get("external_account_id"),
-            "unverified": health.unverified,
-        })
+        accounts.append(email_account_response_from_row(
+            row,
+            verification_status=health.status,
+            last_verified_at=health.last_verified_at,
+            error_reason=health.error_reason,
+            scopes=health.scopes or row.get("scopes") or [],
+            external_account_id=row.get("external_account_id"),
+            unverified=health.unverified,
+        ))
     return {"accounts": sorted(accounts, key=lambda account: account.get("account_order") or 0)}
 
 
@@ -1046,8 +1044,9 @@ async def add_email_account(
 
         # Check for duplicate (only if email is provided - auth code flow checks later)
         if request.provider_email:
+            requested_email = normalize_provider_email(str(request.provider_email))
             for account in existing_accounts:
-                if account['provider_email'].lower() == request.provider_email.lower():
+                if normalize_provider_email(account.get("provider_email")) == requested_email:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="This email account is already connected"
