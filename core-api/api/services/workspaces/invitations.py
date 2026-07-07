@@ -359,6 +359,34 @@ async def _expire_pending_invitations(
     return expired_ids
 
 
+async def has_valid_pending_invitation_for_email(email: str) -> bool:
+    """Return whether an email has an active, non-personal workspace invite."""
+    normalized_email = _normalize_email(email)
+    if not normalized_email:
+        return False
+
+    await _expire_pending_invitations(normalized_email=normalized_email)
+
+    client = await get_async_service_role_client()
+    result = await client.table("workspace_invitations") \
+        .select("id, workspace_id") \
+        .eq("status", "pending") \
+        .eq("email", normalized_email) \
+        .gt("expires_at", _now_iso()) \
+        .order("created_at", desc=True) \
+        .execute()
+
+    for invitation in result.data or []:
+        try:
+            workspace = await _get_workspace(invitation["workspace_id"])
+        except HTTPException:
+            continue
+        if not workspace.get("is_default"):
+            return True
+
+    return False
+
+
 async def create_or_refresh_workspace_invitation(
     workspace_id: str,
     invited_email: str,

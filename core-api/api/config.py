@@ -254,6 +254,10 @@ class Settings(BaseSettings):
     # Global app admins. These users bypass workspace membership checks in the API.
     super_admin_emails: str = ""
 
+    # Production signup policy. In production, new signups are limited to these
+    # domains, super admins, or users with pending workspace invitations.
+    signup_allowed_domains: str = "starterstack.ai"
+
     @model_validator(mode="after")
     def validate_token_encryption_settings(self):
         """Fail fast on invalid token-encryption rollout configuration."""

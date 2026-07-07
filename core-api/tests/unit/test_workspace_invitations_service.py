@@ -258,6 +258,64 @@ async def test_create_invite_requires_admin_or_owner(monkeypatch, invitations_mo
 
 
 @pytest.mark.asyncio
+async def test_has_valid_pending_invitation_requires_non_personal_workspace(monkeypatch, invitations_module):
+    future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    state: Dict[str, List[Dict[str, Any]]] = {
+        "workspaces": [
+            {"id": "personal-ws", "name": "Personal", "is_default": True},
+            {"id": "team-ws", "name": "Team", "is_default": False},
+        ],
+        "workspace_invitations": [
+            {
+                "id": "invite-personal",
+                "workspace_id": "personal-ws",
+                "email": "invitee@example.com",
+                "status": "pending",
+                "expires_at": future,
+                "created_at": "2026-01-01T00:00:00+00:00",
+            },
+            {
+                "id": "invite-team",
+                "workspace_id": "team-ws",
+                "email": "invitee@example.com",
+                "status": "pending",
+                "expires_at": future,
+                "created_at": "2026-01-02T00:00:00+00:00",
+            },
+        ],
+    }
+    client = FakeSupabaseClient(state)
+    monkeypatch.setattr(invitations_module, "get_async_service_role_client", AsyncMock(return_value=client))
+
+    assert await invitations_module.has_valid_pending_invitation_for_email("Invitee@example.com") is True
+
+
+@pytest.mark.asyncio
+async def test_has_valid_pending_invitation_ignores_expired_rows(monkeypatch, invitations_module):
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    state: Dict[str, List[Dict[str, Any]]] = {
+        "workspaces": [
+            {"id": "team-ws", "name": "Team", "is_default": False},
+        ],
+        "workspace_invitations": [
+            {
+                "id": "invite-expired",
+                "workspace_id": "team-ws",
+                "email": "invitee@example.com",
+                "status": "pending",
+                "expires_at": past,
+                "created_at": "2026-01-01T00:00:00+00:00",
+            },
+        ],
+    }
+    client = FakeSupabaseClient(state)
+    monkeypatch.setattr(invitations_module, "get_async_service_role_client", AsyncMock(return_value=client))
+
+    assert await invitations_module.has_valid_pending_invitation_for_email("invitee@example.com") is False
+    assert state["workspace_invitations"][0]["status"] == "expired"
+
+
+@pytest.mark.asyncio
 async def test_accept_invite_rejects_email_mismatch(monkeypatch, invitations_module):
     state = _base_state()
     state["users"].append({"id": "user-2", "email": "other@example.com", "name": "Other"})

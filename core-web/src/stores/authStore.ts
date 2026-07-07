@@ -183,6 +183,35 @@ async function startComposioLogin(provider: ComposioLoginProvider, redirectTo?: 
   window.location.assign(data.redirect_url);
 }
 
+async function ensureSignupEligible(email: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/auth/signup/eligibility`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+  } catch (error) {
+    if (!isFetchNetworkError(error)) throw error;
+    throw new Error(`Could not reach the auth API at ${API_BASE} to check signup access`);
+  }
+
+  if (response.ok) return;
+
+  let message = 'Signup is invite-only for this workspace';
+  try {
+    const errorData = (await response.json()) as { detail?: unknown; message?: unknown };
+    if (typeof errorData.detail === 'string') {
+      message = errorData.detail;
+    } else if (typeof errorData.message === 'string') {
+      message = errorData.message;
+    }
+  } catch {
+    // Keep default message.
+  }
+  throw new Error(message);
+}
+
 async function completeOAuthConnection(session: Session): Promise<void> {
   const providerToken = asOptionalString(session.provider_token);
   const email = asOptionalString(session.user.email);
@@ -367,6 +396,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       signUpWithEmail: async (email, password) => {
+        await ensureSignupEligible(email);
+
         const { data, error } = await supabase.auth.signUp({
           email,
           password,

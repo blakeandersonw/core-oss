@@ -33,6 +33,8 @@ from api.services.connections.hardening import (
     verify_composio_backed_connection,
 )
 from api.services.workspaces.invitations import resolve_post_signup_pending_invitations
+from api.services.signup_access import assert_signup_allowed_for_email, get_signup_eligibility
+from api.services.users import get_auth_user_by_email
 from api.dependencies import get_current_user_email, get_current_user_jwt, get_current_user_id
 from api.exceptions import handle_api_exception
 from api.schemas import MessageResponse
@@ -93,6 +95,16 @@ class OAuthConfigResponse(BaseModel):
     supported_providers: List[str] = ["google", "microsoft"]
 
 
+class SignupEligibilityRequest(BaseModel):
+    email: EmailStr
+
+
+class SignupEligibilityResponse(BaseModel):
+    allowed: bool
+    reason: Optional[str] = None
+    message: Optional[str] = None
+
+
 @router.get("/oauth-config", response_model=OAuthConfigResponse)
 async def get_oauth_config():
     """
@@ -112,6 +124,25 @@ async def get_oauth_config():
         microsoft_client_id=settings.microsoft_client_id or None,
         supported_providers=["google", "microsoft"]
     )
+
+
+# ============== Signup Access ==============
+
+@router.post("/signup/eligibility", response_model=SignupEligibilityResponse)
+@limiter.limit("20/minute;200/day", key_func=_get_client_ip)
+async def check_signup_eligibility(
+    request: Request,
+    response: Response,
+    body: SignupEligibilityRequest,
+):
+    """Check whether an email may create a new account in this environment."""
+    eligibility = await get_signup_eligibility(str(body.email))
+    if not eligibility["allowed"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(eligibility["message"] or "Signup is not available for this email"),
+        )
+    return SignupEligibilityResponse(**eligibility)
 
 
 # ============== Composio Sign-in Bridge ==============
@@ -362,6 +393,10 @@ async def complete_composio_login(
         connected_account_id=body.connected_account_id,
     )
     email = str(profile["email"])
+    existing_user = await get_auth_user_by_email(email)
+    if not existing_user:
+        await assert_signup_allowed_for_email(email)
+
     session = _ensure_auth_user_and_magic_token(
         email=email,
         name=profile.get("name"),
@@ -665,7 +700,10 @@ async def create_user(
         )
 
     try:
+        await assert_signup_allowed_for_email(str(user.email))
         return AuthService.create_user(user.model_dump(), user_jwt)
+    except HTTPException:
+        raise
     except Exception as e:
         handle_api_exception(e, "Failed to create user", logger)
 
