@@ -1,5 +1,11 @@
 # Core
 
+https://github.com/blakeandersonw/core-oss/raw/main/docs/core-demo.mp4
+
+<video src="https://github.com/blakeandersonw/core-oss/raw/main/docs/core-demo.mp4" controls width="100%"></video>
+
+▶️ [Watch the demo](docs/core-demo.mp4)
+
 Open-source, all-in-one productivity platform. Email, calendar, chat (AI), messages, files, projects, and dashboard — in a single app.
 
 **Core** is a monorepo with three packages:
